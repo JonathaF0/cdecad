@@ -6,7 +6,7 @@ Everything sensitive (API keys, backend URL, community ID, Discord webhooks) is 
 
 ## 1. The convars (server.cfg)
 
-Add these to your `server.cfg` (or `exec` them from a private `secrets.cfg` you don't commit). Set them **before** the `ensure`/`start` lines for the CDECAD resources.
+Add these to your `server.cfg` 
 
 ### Required
 
@@ -18,7 +18,7 @@ set CDE_CAD_COMMUNITY_ID  "your_discord_guild_id"
 
 | Convar | Where to get it | Notes |
 |---|---|---|
-| `CDE_CAD_API_URL` | Your CAD backend base URL — `https://cdecad.com` for the hosted version, your domain if self-hosted | No trailing slash. Resources that historically used `/api` paths append it themselves. |
+| `CDE_CAD_API_URL` | Your CAD backend base URL — `https://cdecad.com` for the hosted version, your domain if hosted | No trailing slash. Resources that historically used `/api` paths append it themselves. |
 | `CDE_CAD_API_KEY` | CAD admin panel → FiveM Integration → Issue Key | Format `fvm_<64-char-hex>`. Treat as a password. |
 | `CDE_CAD_COMMUNITY_ID` | Your Discord server's guild ID | Same value as `community.discordGuildId` in the CAD. |
 
