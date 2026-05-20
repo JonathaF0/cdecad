@@ -1,0 +1,214 @@
+/* ─── Reset ──────────────────────────────────────────────────────────────── */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; pointer-events: none; }
+
+.hidden { display: none !important; }
+
+/* ─── Tablet ─────────────────────────────────────────────────────────────── */
+.tablet {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 9999;
+    pointer-events: auto;
+    transition: opacity 0.2s ease;
+}
+.tablet.dimmed { opacity: 0.15; }
+
+.tablet-frame {
+    width: 70vw;
+    height: 85vh;
+    background: #1a1a2e;
+    border: 3px solid #16213e;
+    border-radius: 18px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 0 60px rgba(0, 0, 0, 0.8), 0 0 20px rgba(59, 130, 246, 0.15);
+}
+
+.tablet-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    background: #0f1529;
+    border-bottom: 1px solid #1e2a4a;
+    min-height: 40px;
+}
+
+.tablet-title {
+    color: #3b82f6;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+}
+
+.tablet-close {
+    background: none;
+    border: 1px solid #374151;
+    color: #9ca3af;
+    font-size: 20px;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+    /* Force a stacking context above the iframe so clicks can't be stolen
+       by focused iframe content when the user reaches for the X. */
+    position: relative;
+    z-index: 2;
+    pointer-events: auto;
+}
+.tablet-close:hover {
+    background: #ef4444;
+    border-color: #ef4444;
+    color: #fff;
+}
+
+.tablet-iframe {
+    flex: 1;
+    width: 100%;
+    border: none;
+    background: #0d1117;
+}
+
+/* ─── Call Details Popup ─────────────────────────────────────────────────── */
+.call-popup {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    width: 340px;
+    background: rgba(30, 58, 95, 0.92);
+    border-radius: 10px;
+    z-index: 10000;
+    backdrop-filter: blur(8px);
+    overflow: hidden;
+    pointer-events: auto;
+}
+
+.popup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+}
+
+.popup-title {
+    color: #3b82f6;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+}
+
+.call-counter {
+    color: #6b7280;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.popup-content {
+    padding: 12px 14px;
+}
+
+.no-calls {
+    color: #6b7280;
+    font-size: 13px;
+    text-align: center;
+    padding: 16px 0;
+}
+
+.call-field {
+    margin-bottom: 8px;
+}
+
+.call-label {
+    color: #6b7280;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 2px;
+}
+
+.call-value {
+    color: #e5e7eb;
+    font-size: 13px;
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.call-value.call-type {
+    color: #3b82f6;
+    font-weight: 600;
+    font-size: 14px;
+}
+
+/* Priority badges */
+.priority-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+.priority-low       { background: #1e3a2f; color: #34d399; }
+.priority-normal    { background: #1e2a4a; color: #60a5fa; }
+.priority-medium    { background: #3b2f1e; color: #fbbf24; }
+.priority-high      { background: #3b1e1e; color: #f87171; }
+.priority-critical  { background: #5c1e1e; color: #ff4444; animation: pulse-critical 1.5s infinite; }
+
+@keyframes pulse-critical {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+}
+
+/* Status badge */
+.status-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    background: #1e2a4a;
+    color: #60a5fa;
+}
+.status-pending   { background: #3b2f1e; color: #fbbf24; }
+.status-assigned  { background: #1e2a4a; color: #60a5fa; }
+.status-enroute   { background: #1e3a2f; color: #34d399; }
+.status-on-scene  { background: #1e3a2f; color: #10b981; }
+
+.call-row {
+    display: flex;
+    gap: 10px;
+}
+.call-row .call-field { flex: 1; }
+
+/* ─── Navigation Buttons ────────────────────────────────────────────────── */
+.popup-nav {
+    display: flex;
+}
+
+.nav-btn {
+    flex: 1;
+    background: none;
+    border: none;
+    color: #9ca3af;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    padding: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.nav-btn:first-child { border-right: 1px solid rgba(59, 130, 246, 0.2); }
+.nav-btn:hover { background: rgba(59, 130, 246, 0.1); color: #3b82f6; }

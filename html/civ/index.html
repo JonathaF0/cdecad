@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CDECAD ID Card</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="id-card-container" class="hidden">
+        <div id="id-card">
+            <div class="card-header">
+                <div class="state-seal">
+                    <img src="https://i.imgur.com/YourSealHere.png" alt="State Seal" onerror="this.style.display='none'">
+                </div>
+                <div class="header-text">
+                    <div class="state-name">SAN ANDREAS</div>
+                    <div class="card-title">DRIVER LICENSE</div>
+                </div>
+            </div>
+            
+            <div class="card-body">
+                <div class="photo-section">
+                    <div class="photo-placeholder" id="civilian-photo">
+                        <span class="no-photo">NO PHOTO</span>
+                    </div>
+                    <div class="signature" id="civilian-signature"></div>
+                </div>
+                
+                <div class="info-section">
+                    <div class="info-row">
+                        <span class="label">DL</span>
+                        <span class="value" id="civ-ssn">-</span>
+                    </div>
+                    <div class="info-row name-row">
+                        <span class="label">NAME</span>
+                        <span class="value" id="civ-name">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">DOB</span>
+                        <span class="value" id="civ-dob">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">SEX</span>
+                        <span class="value" id="civ-sex">-</span>
+                        <span class="label" style="margin-left: 20px;">EYES</span>
+                        <span class="value" id="civ-eyes">-</span>
+                    </div>
+                    <div class="info-row">
+                        <span class="label">HGT</span>
+                        <span class="value" id="civ-height">-</span>
+                        <span class="label" style="margin-left: 20px;">WGT</span>
+                        <span class="value" id="civ-weight">-</span>
+                    </div>
+                    <div class="info-row address-row">
+                        <span class="label">ADDR</span>
+                        <span class="value" id="civ-address">-</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card-footer">
+                <div class="barcode"></div>
+                <div class="shown-by" id="shown-by"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- ─── Bank Panel ─────────────────────────────────────────────────────── -->
+    <div id="bank-panel" class="hidden">
+        <div class="bank-overlay"></div>
+        <div class="bank-container">
+
+            <div class="bank-header">
+                <div class="bank-header-left">
+                    <div class="bank-logo">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+                    </div>
+                    <div class="bank-header-info">
+                        <div class="bank-title">CDE BANK</div>
+                        <div class="bank-subtitle" id="bank-civ-name">Loading...</div>
+                    </div>
+                </div>
+                <div class="bank-account-badge" id="bank-account-num">ACC---------</div>
+                <button id="bank-close" class="bank-close-btn" title="Close (ESC)">&#x2715;</button>
+            </div>
+
+            <div class="bank-body">
+                <!-- Sidebar -->
+                <div class="bank-sidebar">
+                    <div class="balance-card">
+                        <div class="balance-label">AVAILABLE BALANCE</div>
+                        <div class="balance-amount" id="bank-balance">$0.00</div>
+                        <div class="balance-status" id="bank-status-badge">ACTIVE</div>
+                    </div>
+
+                    <nav class="bank-nav">
+                        <button class="bank-nav-btn active" data-tab="transactions">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                            Transactions
+                        </button>
+                        <button class="bank-nav-btn" data-tab="deposit">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+                            Deposit
+                        </button>
+                        <button class="bank-nav-btn" data-tab="withdraw">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                            Withdraw
+                        </button>
+                        <button class="bank-nav-btn" data-tab="transfer">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                            Transfer
+                        </button>
+                    </nav>
+                </div>
+
+                <!-- Main content area -->
+                <div class="bank-content">
+
+                    <!-- Transactions -->
+                    <div id="tab-transactions" class="bank-tab active">
+                        <div class="tab-header">
+                            <h3>Transaction History</h3>
+                            <button id="btn-refresh" class="btn-icon" title="Refresh">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                            </button>
+                        </div>
+                        <div id="transaction-list" class="transaction-list">
+                            <div class="tx-empty">No transactions yet</div>
+                        </div>
+                    </div>
+
+                    <!-- Deposit -->
+                    <div id="tab-deposit" class="bank-tab hidden">
+                        <div class="tab-header"><h3>Make a Deposit</h3></div>
+                        <div class="form-card">
+                            <div class="cash-hint-row">
+                                <span class="cash-hint-label">Available Cash</span>
+                                <span id="deposit-cash-available" class="cash-hint-value">—</span>
+                            </div>
+                            <div class="form-group">
+                                <label>Amount ($)</label>
+                                <input type="number" id="deposit-amount" class="bank-input" placeholder="0.00" min="1" step="0.01">
+                            </div>
+                            <div class="form-group">
+                                <label>Description</label>
+                                <input type="text" id="deposit-desc" class="bank-input" placeholder="e.g. Paycheck" maxlength="100">
+                            </div>
+                            <button id="btn-deposit" class="btn-primary btn-green">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>
+                                Deposit Funds
+                            </button>
+                            <div id="deposit-msg" class="form-msg hidden"></div>
+                        </div>
+                    </div>
+
+                    <!-- Withdraw -->
+                    <div id="tab-withdraw" class="bank-tab hidden">
+                        <div class="tab-header"><h3>Make a Withdrawal</h3></div>
+                        <div class="form-card">
+                            <div class="form-group">
+                                <label>Amount ($)</label>
+                                <input type="number" id="withdraw-amount" class="bank-input" placeholder="0.00" min="1" step="0.01">
+                            </div>
+                            <div class="form-group">
+                                <label>Description</label>
+                                <input type="text" id="withdraw-desc" class="bank-input" placeholder="e.g. Cash withdrawal" maxlength="100">
+                            </div>
+                            <button id="btn-withdraw" class="btn-primary btn-red">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+                                Withdraw Funds
+                            </button>
+                            <div id="withdraw-msg" class="form-msg hidden"></div>
+                        </div>
+                    </div>
+
+                    <!-- Transfer -->
+                    <div id="tab-transfer" class="bank-tab hidden">
+                        <div class="tab-header"><h3>Transfer Funds</h3></div>
+                        <div class="form-card">
+                            <div class="form-group">
+                                <label>Recipient Account Number</label>
+                                <input type="text" id="transfer-to" class="bank-input" placeholder="e.g. ACC123456789" maxlength="20">
+                            </div>
+                            <div class="form-group">
+                                <label>Amount ($)</label>
+                                <input type="number" id="transfer-amount" class="bank-input" placeholder="0.00" min="1" step="0.01">
+                            </div>
+                            <div class="form-group">
+                                <label>Description</label>
+                                <input type="text" id="transfer-desc" class="bank-input" placeholder="e.g. Rent payment" maxlength="100">
+                            </div>
+                            <button id="btn-transfer" class="btn-primary">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                                Send Transfer
+                            </button>
+                            <div id="transfer-msg" class="form-msg hidden"></div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

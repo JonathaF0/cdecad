@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CDECAD</title>
+<link rel="stylesheet" href="tablet/style.css">
+<link rel="stylesheet" href="civ/style.css">
+</head>
+<body>
+  <script>
+    // Buffer messages that arrive before the tablet script registers.
+    window.__nuiBuf = [];
+    window.__nuiBufHandler = function (e) { window.__nuiBuf.push(e.data); };
+    window.addEventListener('message', window.__nuiBufHandler);
+  </script>
+
+  <!-- Tablet (top-level, same shape as standalone) -->
+  <div id="tablet" class="tablet hidden">
+    <div class="tablet-frame">
+      <div class="tablet-header">
+        <span class="tablet-title">CDECAD</span>
+        <button id="closeTablet" class="tablet-close">&times;</button>
+      </div>
+      <iframe id="tabletFrame" class="tablet-iframe" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox" allow="clipboard-write"></iframe>
+    </div>
+  </div>
+
+  <div id="callPopup" class="call-popup hidden">
+    <div class="popup-header">
+      <span class="popup-title">ACTIVE CALL</span>
+      <span id="callCounter" class="call-counter">0 / 0</span>
+    </div>
+    <div id="callContent" class="popup-content">
+      <div class="no-calls">No active calls</div>
+    </div>
+    <div id="callNav" class="popup-nav hidden">
+      <button id="prevCall" class="nav-btn">&laquo; PREV</button>
+      <button id="nextCall" class="nav-btn">NEXT &raquo;</button>
+    </div>
+  </div>
+
+  <script src="tablet/script.js"></script>
+
+  <script>
+    // ─── Lazy iframe factory for sub-NUIs ──────────────────────────────
+    function lazyIframe(src) {
+      var f = null;
+      var PARENT = (typeof GetParentResourceName === 'function') ? GetParentResourceName() : 'CDECAD';
+      return {
+        get: function () {
+          if (f) return f;
+          f = document.createElement('iframe');
+          f.src = src;
+          f.style.cssText = 'position:fixed;inset:0;width:0;height:0;border:0;background:transparent;pointer-events:none;';
+          document.body.appendChild(f);
+          f.addEventListener('load', function () {
+            try { f.contentWindow.GetParentResourceName = function () { return PARENT; }; } catch (_) {}
+          });
+          return f;
+        },
+        size: function (state) {
+          if (!f && state === 'closed') return;
+          var el = this.get();
+          if (state === 'interactive') {
+            el.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;background:transparent;pointer-events:auto;z-index:11000;';
+          } else if (state === 'passive') {
+            el.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;background:transparent;pointer-events:none;z-index:11000;';
+          } else {
+            el.style.cssText = 'position:fixed;inset:0;width:0;height:0;border:0;background:transparent;pointer-events:none;';
+          }
+        }
+      };
+    }
+
+    var civ    = lazyIframe('civ/index.html');
+    var wraith = lazyIframe('wraith/index.html');
+
+    // Route action-keyed messages by their specific action name.
+    var CIV_ACTIONS      = { showID: 'passive', openBank: 'interactive', openAdminBank: 'interactive', hideID: 'closed', closeBank: 'closed' };
+    var WRAITH_ACTIONS   = { showPlateResult: 'passive', hidePlateResult: 'closed' };
+
+    window.addEventListener('message', function (e) {
+      var d = e.data || {};
+      if (!d.action) return;
+      if (CIV_ACTIONS[d.action] !== undefined) {
+        try { civ.get().contentWindow.postMessage(d, '*'); } catch (_) {}
+        civ.size(CIV_ACTIONS[d.action]);
+      } else if (WRAITH_ACTIONS[d.action] !== undefined) {
+        try { wraith.get().contentWindow.postMessage(d, '*'); } catch (_) {}
+        wraith.size(WRAITH_ACTIONS[d.action]);
+      }
+    });
+
+    // ─── Replay early messages ─────────────────────────────────────────
+    (function () {
+      window.removeEventListener('message', window.__nuiBufHandler);
+      var buf = window.__nuiBuf || [];
+      window.__nuiBuf = null;
+      for (var i = 0; i < buf.length; i++) {
+        window.dispatchEvent(new MessageEvent('message', { data: buf[i] }));
+      }
+    })();
+  </script>
+</body>
+</html>

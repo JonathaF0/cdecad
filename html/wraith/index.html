@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CDE Plate Reader</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: transparent;
+            overflow: hidden;
+        }
+
+        #plate-result {
+            display: none;
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            width: 340px;
+            background: rgba(10, 10, 15, 0.92);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-size: 13px;
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
+            animation: slideIn 0.3s ease-out;
+            z-index: 9999;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100px);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        @keyframes slideOut {
+            from {
+                transform: translateX(0);
+                opacity: 1;
+            }
+            to {
+                transform: translateX(100px);
+                opacity: 0;
+            }
+        }
+
+        .plate-result-hiding {
+            animation: slideOut 0.2s ease-in forwards;
+        }
+
+        /* Header */
+        .pr-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .pr-header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .pr-cam-badge {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background: rgba(100, 100, 255, 0.2);
+            color: #8888ff;
+        }
+
+        .pr-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #888;
+        }
+
+        .pr-close {
+            cursor: pointer;
+            color: #666;
+            font-size: 16px;
+            line-height: 1;
+            padding: 2px 6px;
+            border-radius: 3px;
+            transition: all 0.15s;
+        }
+
+        .pr-close:hover {
+            color: #fff;
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        /* Plate Number Display */
+        .pr-plate {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 12px 14px;
+            gap: 10px;
+        }
+
+        .pr-plate-number {
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: 3px;
+            color: #fff;
+        }
+
+        /* Alert Bar */
+        .pr-alert-bar {
+            padding: 6px 14px;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            text-align: center;
+        }
+
+        .pr-alert-none {
+            background: rgba(34, 197, 94, 0.15);
+            color: #22c55e;
+            border-top: 2px solid #22c55e;
+        }
+
+        .pr-alert-caution {
+            background: rgba(245, 158, 11, 0.15);
+            color: #f59e0b;
+            border-top: 2px solid #f59e0b;
+        }
+
+        .pr-alert-alert {
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            border-top: 2px solid #ef4444;
+            animation: alertPulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes alertPulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        /* Flags */
+        .pr-flags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            padding: 8px 14px;
+        }
+
+        .pr-flag {
+            font-size: 10px;
+            font-weight: 600;
+            padding: 2px 8px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        .pr-flag-red {
+            background: rgba(239, 68, 68, 0.2);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .pr-flag-yellow {
+            background: rgba(245, 158, 11, 0.2);
+            color: #fbbf24;
+            border: 1px solid rgba(245, 158, 11, 0.3);
+        }
+
+        .pr-flag-blue {
+            background: rgba(59, 130, 246, 0.2);
+            color: #60a5fa;
+            border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+        /* Info Sections */
+        .pr-section {
+            padding: 8px 14px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .pr-section-title {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #666;
+            margin-bottom: 6px;
+        }
+
+        .pr-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 2px 0;
+        }
+
+        .pr-label {
+            color: #888;
+            font-size: 12px;
+        }
+
+        .pr-value {
+            color: #ddd;
+            font-size: 12px;
+            font-weight: 500;
+            text-align: right;
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .pr-value-good { color: #22c55e; }
+        .pr-value-warn { color: #f59e0b; }
+        .pr-value-bad { color: #ef4444; }
+
+        /* BOLO Section */
+        .pr-bolo {
+            padding: 8px 14px;
+            background: rgba(239, 68, 68, 0.08);
+            border-top: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .pr-bolo-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #ef4444;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .pr-bolo-text {
+            font-size: 12px;
+            color: #e0e0e0;
+            line-height: 1.4;
+        }
+
+        /* Footer */
+        .pr-footer {
+            padding: 6px 14px;
+            text-align: center;
+            font-size: 9px;
+            color: #444;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+        }
+    </style>
+</head>
+<body>
+    <div id="plate-result">
+        <div class="pr-header">
+            <div class="pr-header-left">
+                <span class="pr-title">Plate Reader</span>
+                <span class="pr-cam-badge" id="pr-cam"></span>
+            </div>
+            <span class="pr-close" id="pr-close">&times;</span>
+        </div>
+
+        <div class="pr-plate">
+            <span class="pr-plate-number" id="pr-plate-number"></span>
+        </div>
+
+        <div class="pr-alert-bar" id="pr-alert-bar"></div>
+
+        <div class="pr-flags" id="pr-flags"></div>
+
+        <div class="pr-section" id="pr-vehicle-section">
+            <div class="pr-section-title">Vehicle</div>
+            <div id="pr-vehicle-info"></div>
+        </div>
+
+        <div class="pr-section" id="pr-owner-section">
+            <div class="pr-section-title">Registered Owner</div>
+            <div id="pr-owner-info"></div>
+        </div>
+
+        <div class="pr-bolo" id="pr-bolo-section" style="display:none;">
+            <div class="pr-bolo-title" id="pr-bolo-title"></div>
+            <div class="pr-bolo-text" id="pr-bolo-text"></div>
+        </div>
+
+        <div class="pr-footer" id="pr-footer">CDECAD &bull; Press Backspace to dismiss</div>
+    </div>
+
+    <script>
+        const container = document.getElementById('plate-result');
+
+        document.getElementById('pr-close').addEventListener('click', function() {
+            fetch('https://' + (typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'cde-wraith') + '/closePlateResult', { method: 'POST', body: JSON.stringify({}) });
+        });
+
+        window.addEventListener('message', function(event) {
+            const msg = event.data;
+
+            if (msg.action === 'showPlateResult') {
+                showResult(msg.data, msg.cam);
+            } else if (msg.action === 'hidePlateResult') {
+                container.classList.add('plate-result-hiding');
+                setTimeout(function() {
+                    container.style.display = 'none';
+                    container.classList.remove('plate-result-hiding');
+                }, 200);
+            }
+        });
+
+        function showResult(data, cam) {
+            // Camera badge
+            const camEl = document.getElementById('pr-cam');
+            camEl.textContent = cam === 'manual' ? 'Manual' : cam + ' cam';
+
+            // Plate number
+            document.getElementById('pr-plate-number').textContent = data.plate || '???';
+
+            // Alert bar
+            const alertBar = document.getElementById('pr-alert-bar');
+            alertBar.className = 'pr-alert-bar';
+
+            if (data.alertLevel === 'alert') {
+                alertBar.classList.add('pr-alert-alert');
+                alertBar.textContent = 'HIGH ALERT';
+            } else if (data.alertLevel === 'caution') {
+                alertBar.classList.add('pr-alert-caution');
+                alertBar.textContent = 'CAUTION';
+            } else {
+                alertBar.classList.add('pr-alert-none');
+                alertBar.textContent = 'CLEAN';
+            }
+
+            // Flags
+            const flagsEl = document.getElementById('pr-flags');
+            flagsEl.innerHTML = '';
+            if (data.flags && data.flags.length > 0) {
+                flagsEl.style.display = 'flex';
+                data.flags.forEach(function(flag) {
+                    const el = document.createElement('span');
+                    el.className = 'pr-flag ' + getFlagColor(flag);
+                    el.textContent = flag;
+                    flagsEl.appendChild(el);
+                });
+            } else {
+                flagsEl.style.display = 'none';
+            }
+
+            // Cached scan hits have no vehicle/owner payload — hide both
+            // sections and surface a hint that locking will pull the full record.
+            const vehSection = document.getElementById('pr-vehicle-section');
+            const ownerSection = document.getElementById('pr-owner-section');
+
+            const footerEl = document.getElementById('pr-footer');
+            if (data.cached) {
+                vehSection.style.display = 'none';
+                ownerSection.style.display = 'none';
+                footerEl.innerHTML = 'CDECAD &bull; Scan hit &bull; Lock plate for full details';
+            } else {
+                footerEl.innerHTML = 'CDECAD &bull; Press Backspace to dismiss';
+                // Vehicle info
+                vehSection.style.display = 'block';
+                const vehEl = document.getElementById('pr-vehicle-info');
+                const veh = data.vehicle || {};
+                vehEl.innerHTML = '';
+                addRow(vehEl, 'Vehicle', (veh.color || '') + ' ' + (veh.year || '') + ' ' + (veh.make || '') + ' ' + (veh.model || ''));
+                addRow(vehEl, 'Stolen', veh.stolen ? 'YES' : 'No', veh.stolen ? 'pr-value-bad' : 'pr-value-good');
+                addRow(vehEl, 'Registration', veh.registrationStatus || 'Unknown', statusClass(veh.registrationStatus));
+                addRow(vehEl, 'Insurance', veh.insuranceStatus || 'Unknown', statusClass(veh.insuranceStatus));
+
+                // Owner info
+                const ownerEl = document.getElementById('pr-owner-info');
+                const owner = data.owner;
+                ownerEl.innerHTML = '';
+
+                if (owner) {
+                    ownerSection.style.display = 'block';
+                    addRow(ownerEl, 'Name', owner.name || 'Unknown');
+                    if (owner.dateOfBirth) {
+                        addRow(ownerEl, 'DOB', formatDate(owner.dateOfBirth));
+                    }
+                    addRow(ownerEl, 'License', owner.licenseStatus || 'Unknown', statusClass(owner.licenseStatus));
+                    if (owner.hasWarrants) {
+                        addRow(ownerEl, 'Warrants', 'ACTIVE', 'pr-value-bad');
+                    }
+                    if (owner.isDangerous) {
+                        addRow(ownerEl, 'Dangerous', 'YES', 'pr-value-bad');
+                    }
+                } else {
+                    ownerSection.style.display = 'none';
+                }
+            }
+
+            // BOLO section
+            const boloSection = document.getElementById('pr-bolo-section');
+            const boloTitle = document.getElementById('pr-bolo-title');
+            const boloText = document.getElementById('pr-bolo-text');
+
+            if (data.bolo || data.ownerBolo) {
+                boloSection.style.display = 'block';
+                const bolo = data.bolo || data.ownerBolo;
+                boloTitle.textContent = data.bolo ? 'VEHICLE BOLO' : 'OWNER BOLO';
+                boloText.innerHTML = '<strong>' + escapeHtml(bolo.reason || '') + '</strong>';
+                if (bolo.description) {
+                    boloText.innerHTML += '<br>' + escapeHtml(bolo.description);
+                }
+                if (bolo.priority) {
+                    boloText.innerHTML += '<br><em>Priority: ' + escapeHtml(bolo.priority.toUpperCase()) + '</em>';
+                }
+            } else {
+                boloSection.style.display = 'none';
+            }
+
+            // Show the container
+            container.classList.remove('plate-result-hiding');
+            container.style.display = 'block';
+        }
+
+        function addRow(parent, label, value, valueClass) {
+            const row = document.createElement('div');
+            row.className = 'pr-row';
+
+            const labelEl = document.createElement('span');
+            labelEl.className = 'pr-label';
+            labelEl.textContent = label;
+
+            const valueEl = document.createElement('span');
+            valueEl.className = 'pr-value' + (valueClass ? ' ' + valueClass : '');
+            valueEl.textContent = value || 'Unknown';
+
+            row.appendChild(labelEl);
+            row.appendChild(valueEl);
+            parent.appendChild(row);
+        }
+
+        function getFlagColor(flag) {
+            var redFlags = ['STOLEN', 'BOLO ALERT', 'OWNER BOLO', 'ACTIVE WARRANTS', 'DANGEROUS PERSON', 'Wanted', 'Weapon-Related'];
+            var yellowFlags = ['IMPOUNDED', 'MISSING PERSON', 'REG EXPIRED', 'REG SUSPENDED', 'REG REVOKED', 'NO INSURANCE', 'NOT REGISTERED', 'VEHICLE BOLO', 'Gang-Related', 'Drug-Related'];
+
+            if (redFlags.indexOf(flag) !== -1) return 'pr-flag-red';
+            if (yellowFlags.indexOf(flag) !== -1) return 'pr-flag-yellow';
+            return 'pr-flag-blue';
+        }
+
+        function statusClass(status) {
+            if (!status) return '';
+            var s = status.toLowerCase();
+            if (s === 'valid') return 'pr-value-good';
+            if (s === 'expired' || s === 'none' || s === 'suspended' || s === 'revoked') return 'pr-value-bad';
+            return 'pr-value-warn';
+        }
+
+        function formatDate(dateStr) {
+            if (!dateStr) return 'Unknown';
+            var d = new Date(dateStr);
+            if (isNaN(d.getTime())) return dateStr;
+            return (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear();
+        }
+
+        function escapeHtml(text) {
+            var div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

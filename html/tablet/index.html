@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CAD Tablet</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- ─── Tablet Container ─────────────────────────────────────────── -->
+    <div id="tablet" class="tablet hidden">
+        <div class="tablet-frame">
+            <div class="tablet-header">
+                <span class="tablet-title">CDECAD</span>
+                <button id="closeTablet" class="tablet-close">&times;</button>
+            </div>
+            <iframe id="tabletFrame" class="tablet-iframe" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox" allow="clipboard-write"></iframe>
+        </div>
+    </div>
+
+    <!-- ─── Call Details Popup ────────────────────────────────────────── -->
+    <div id="callPopup" class="call-popup hidden">
+        <div class="popup-header">
+            <span class="popup-title">ACTIVE CALL</span>
+            <span id="callCounter" class="call-counter">0 / 0</span>
+        </div>
+        <div id="callContent" class="popup-content">
+            <div class="no-calls">No active calls</div>
+        </div>
+        <div id="callNav" class="popup-nav hidden">
+            <button id="prevCall" class="nav-btn">&laquo; PREV</button>
+            <button id="nextCall" class="nav-btn">NEXT &raquo;</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
