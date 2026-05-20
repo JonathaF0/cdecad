@@ -27,19 +27,16 @@ set CDE_CAD_COMMUNITY_ID  "your_discord_guild_id"
 Per-department Discord webhook URLs. Only set the ones you use:
 
 ```cfg
-set CDE_CAD_WEBHOOK_THP       ""
-set CDE_CAD_WEBHOOK_KCSO      ""
-set CDE_CAD_WEBHOOK_KPD       ""
-set CDE_CAD_WEBHOOK_SCSO      ""
-set CDE_CAD_WEBHOOK_KFD       ""
-set CDE_CAD_WEBHOOK_RMFD      ""
+set CDE_CAD_WEBHOOK_SAHP      ""
+set CDE_CAD_WEBHOOK_LCSO      ""
+set CDE_CAD_WEBHOOK_LSPD      ""
 set CDE_CAD_WEBHOOK_DUTY      ""    # general duty fallback
 set CDE_CAD_WEBHOOK_PAYCHECK  ""    # paycheck log
 ```
 
-Webhook URLs look like `https://discord.com/api/webhooks/<id>/<token>`. If a webhook leaks, delete it in Discord (don't just unset the convar — the token is still valid until the webhook is deleted Discord-side).
+Webhook URLs look like `https://discord.com/api/webhooks/<id>/<token>`. If a webhook leaks, delete it in Discord (don't just unset the convar the token is still valid until the webhook is deleted Discord-side).
 
-### Optional (other resources)
+### Optional (other resources) **COMING SOON*
 
 | Convar | Used by | Purpose |
 |---|---|---|
@@ -50,63 +47,8 @@ Webhook URLs look like `https://discord.com/api/webhooks/<id>/<token>`. If a web
 
 ---
 
-## 2. Which resources to install
 
-You don't need everything. Pick one of these install patterns:
-
-### Pattern A — The CDECAD bundle (recommended)
-
-Drop **`fivem-scripts/CDECAD/`** into your `resources/` directory and add:
-
-```cfg
-ensure CDECAD
-```
-
-Gets you: tablet, duty system, civilian manager, 911 commands — all in one resource. No category folder, no sub-resources to start.
-
-### Pattern B — Standalone resources
-
-Pick whichever individual resources you want from `fivem-scripts/`:
-
-| Folder | What it does |
-|---|---|
-| `cad-tablet` | In-game CAD tablet NUI |
-| `CDE_Duty` | On/off-duty, paychecks, departments, /ts, /panic |
-| `cde-civ-sa` | Civilian manager: /setciv, /myciv, /bank, /showid, /regveh |
-| `cad-911` | /911 and /a911 commands |
-| `cde_lm` | LiveMap location push (superseded by `cad-tablet`'s built-in tracker — don't run both) |
-| `cde-cad-sync` | Auto-detects ESX/QBCore/QBox/NAT2k15/vRP and syncs characters/vehicles to CAD |
-| `cde-cad-{esx,qbcore,qbox-release,nat2k15,vrp}` | Per-framework sync (older — use `cde-cad-sync` instead if possible) |
-| `cde-wraith` | Wraith ARS 2X plate reader → CAD lookup |
-| `cde-london-bridge` | London Studios (SmartFires, SmartSigns, SmartMotorways, Speed Cameras) → CAD |
-| `cde-inferno-bridge` | Inferno Collection (Station Alert, Pager Reborn) → CAD |
-| `cde-dz-drone` | DangerZone drone integration |
-| `cde-ers` | ERS callout integration |
-| `cad-lbphone` | lb-phone messaging hooks |
-| `cad-panic` | Panic button |
-
-**Do not run a standalone alongside the CDECAD bundle for the same module** — duplicate event handlers create unpredictable behaviour.
-
----
-
-## 3. Per-resource .lua config
-
-For most operational tweaks, you don't need to touch any convar — edit the resource's `config.lua` (or `shared/config.lua`):
-
-| Resource | Config file | Common things you'd edit |
-|---|---|---|
-| `CDECAD` | `CDECAD/config.lua` | All four modules' settings (Tablet, Duty, Civ, 911) in one file. Departments, commands, paychecks, postal resource, NPC reports, ID-card style, bank rules. |
-| `cad-tablet` (standalone) | `config.lua` | Keybinds (`TabletKey`, `CallPopupKey`), tablet URL, location tracking |
-| `CDE_Duty` (standalone) | `config.lua` | Departments, paycheck amounts, loadouts, 911 chat settings |
-| `cde-civ-sa` (standalone) | `shared/config.lua` | Commands, ID card style, bank settings, vehicle registration fee |
-| `cde-wraith` | `shared/config.lua` | Plate reader cache, display duration, alert levels |
-| `cde-cad-sync` | `shared/config.lua` | Postal resource, sync intervals, Discord role exclusions |
-
-**Do not put API keys, URLs, or webhook URLs in any `.lua` file.** Those files load via `shared_scripts` and ship to every connecting client. Use convars.
-
----
-
-## 4. Quickstart checklist
+## 2. Quickstart checklist
 
 1. **Get your API key**: CAD admin panel → FiveM Integration → Issue Key. Copy the `fvm_…` string.
 2. **Find your community ID**: Discord → right-click your server → Copy Server ID (Developer Mode required).
@@ -117,7 +59,7 @@ For most operational tweaks, you don't need to touch any convar — edit the res
 
 ---
 
-## 5. Troubleshooting
+## 3. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
@@ -130,11 +72,3 @@ For most operational tweaks, you don't need to touch any convar — edit the res
 
 ---
 
-## 6. Rotating credentials
-
-If a key or webhook ever leaks (a player shares a screenshot, a config is pushed to a public repo, etc.):
-
-1. **API key**: CAD admin → FiveM Integration → Revoke the old key, issue a new one, update `CDE_CAD_API_KEY` in `server.cfg`, restart the resource.
-2. **Discord webhook**: Discord server settings → Integrations → Webhooks → Delete the leaked webhook. Create a fresh one, update the corresponding `CDE_CAD_WEBHOOK_*` convar.
-
-Removing a leaked value from `server.cfg` is **not** enough — the value is still on every machine that ever saw it. Always rotate.
