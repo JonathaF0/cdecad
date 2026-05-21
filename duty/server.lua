@@ -15,14 +15,7 @@ do
     Config.Discord.Webhooks = Config.Discord.Webhooks or {}
     Config.Discord.Webhooks.Duty     = GetConvar('CDE_CAD_WEBHOOK_DUTY', '')
     Config.Discord.Webhooks.Paycheck = GetConvar('CDE_CAD_WEBHOOK_PAYCHECK', '')
--- server.lua
--- CDE Duty System - Clean Version
--- Version 4.0.0 - Simplified, No Blips, Bodycam Overlay Support Only
--- MODIFIED: Individual paycheck timers instead of bulk payouts
 
--- ========================================
--- INITIALIZE TABLES
--- ========================================
 PlaytimeTracker = {}
 OnDutyUnits = {}
 OnDutyLEOUnits = {}
@@ -54,6 +47,13 @@ function FormatTime(seconds)
     return string.format("%02dh %02dm", hrs, mins)
 end
 
+-- ========================================
+-- CAD DUTY STATUS PUSH
+-- ========================================
+-- POST /api/ers/duty so the CAD flips the user's status to 10-8 / 10-42.
+-- Backend is gated by Config.fivemSettings.ersAutoOnDuty and silently
+-- no-ops if the community hasn't enabled it.
+
 local SERVICE_TYPE_BY_DEPT_TYPE = {
     leo  = 'police',
     fire = 'fire',
@@ -84,6 +84,12 @@ function PushDutyToCAD(source, onShift, deptType)
         ['x-api-key']    = Config.CAD.ApiKey,
     })
 end
+
+-- ========================================
+-- CAD BACKEND SYNC (/api/fivem/cde-duty)
+-- ========================================
+-- Mirrors on/off-duty events to the CAD so the supervisor panel can show
+-- in-game duty time alongside CAD duty time. 
 
 function SendCdeDutyToCad(discordId, onShift, department, callSign, durationSec)
     if not Config or not Config.CAD then return end
@@ -434,7 +440,7 @@ local trafficStopCooldowns = {}
 
 -- Wraith ARS 2X fires `wk:onPlateLocked` as a server-side net event only.
 -- Mirror it back to the originating client so the duty system can remember
--- the locked plate for /ts.  This co-exists with the cde-wraith handler.
+-- the locked plate for /ts.  
 RegisterNetEvent('wk:onPlateLocked')
 AddEventHandler('wk:onPlateLocked', function(cam, plate, index)
     local src = source
@@ -697,14 +703,50 @@ AddEventHandler("playerDropped", function(reason)
     
     if wasOnDuty then
         print("^3[CDE-DUTY] " .. playerName .. " disconnected while on duty^0")
+        local discordId = GetDiscordID(serverId)
+        local dutyStart = PlaytimeTracker[serverId]
+        local timePlayed = dutyStart and (os.time() - dutyStart) or 0
+
         if department and Config and Config.Departments and Config.Departments[department] then
-            PushDutyToCAD(serverId, false, Config.Departments[department].type)
+            local deptInfo = Config.Departments[department]
+            PushDutyToCAD(serverId, false, deptInfo.type)
+            local cadDept = deptInfo.cadShortName or deptInfo.shortName or deptInfo.name or department
+            local cadCallSign = deptInfo.callSign
+            SendCdeDutyToCad(discordId, false, cadDept, cadCallSign, timePlayed)
+        else
+            -- Department config is gone (deleted while the player was on
+            -- duty?) , still close the CAD-side session
+            SendCdeDutyToCad(discordId, false, department, nil, timePlayed)
         end
     end
 
     PlayerCalloutSettings[serverId] = nil
     PlayerDepartments[serverId] = nil
     PlaytimeTracker[serverId] = nil
+end)
+
+-- ========================================
+-- RESOURCE LIFECYCLE
+-- ========================================
+-- Close every in-game duty session on the CAD when this resource is stopped
+-- (server shutdown, manual restart, etc.). 
+AddEventHandler('onResourceStop', function(resourceName)
+    if resourceName ~= GetCurrentResourceName() then return end
+    print("^3[CDE-DUTY] Resource stopping , closing CAD duty sessions for " .. #OnDutyUnits .. " players^0")
+    for _, serverId in ipairs(OnDutyUnits) do
+        local discordId = GetDiscordID(serverId)
+        local department = PlayerDepartments[serverId]
+        local dutyStart = PlaytimeTracker[serverId]
+        local timePlayed = dutyStart and (os.time() - dutyStart) or 0
+        local cadDept = department
+        local cadCallSign = nil
+        if department and Config and Config.Departments and Config.Departments[department] then
+            local deptInfo = Config.Departments[department]
+            cadDept = deptInfo.cadShortName or deptInfo.shortName or deptInfo.name or department
+            cadCallSign = deptInfo.callSign
+        end
+        SendCdeDutyToCad(discordId, false, cadDept, cadCallSign, timePlayed)
+    end
 end)
 
 -- ========================================
