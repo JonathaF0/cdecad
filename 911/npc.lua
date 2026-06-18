@@ -1,6 +1,13 @@
 do
     local Config = Cad911Config
 
+-- ═══════════════════════════════════════════════════════════════════
+-- NPC WITNESS REPORTS
+-- Detects gunshots / fights / speed-camera triggers from the local
+-- player and fires `cad-911:npc` to the server, which forwards to
+-- the CAD as a witness 911.
+-- ═══════════════════════════════════════════════════════════════════
+
 if not Config.NPCReports or not Config.NPCReports.Enabled then return end
 
 -- ─── Shared helpers ─────────────────────────────────────────────────
@@ -40,7 +47,19 @@ local function NearbyLivingPeds(coords, radius)
     return count
 end
 
+-- On-duty LEOs must never be NPC-reported (cops doing cop things — drawing a
+-- weapon, firing in a pursuit, etc. — were constantly getting 911'd on
+-- themselves). Check the duty module's export live at send time (same resource
+-- bundle), so it's accurate the instant they go on/off duty.
+local function IsLocalOnDutyLEO()
+    local ok, res = pcall(function()
+        return exports[GetCurrentResourceName()]:IsOnDutyLEO()
+    end)
+    return ok and res == true
+end
+
 local function SendNPC(report)
+    if IsLocalOnDutyLEO() then return end
     TriggerServerEvent('cad-911:npc', report)
 end
 
