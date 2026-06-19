@@ -1,7 +1,3 @@
-// ─── CAD Tablet NUI Script ───────────────────────────────────────────────────
-// Handles tablet iframe display and call details popup rendering.
-// Zero overhead: only listens for NUI messages, no polling or timers.
-
 (function () {
     'use strict';
 
@@ -17,27 +13,25 @@
 
     var tabletURL = '';
     var dimmerEnabled = false;
-
-    // Use the parent resource name so this works if the resource is renamed.
-    // window.GetParentResourceName is injected by FiveM's CefSharp NUI runtime.
     var RESOURCE = (typeof GetParentResourceName === 'function')
         ? GetParentResourceName()
         : 'cad-tablet';
 
     function nuiPost(action) {
-        // Match the prevCall/nextCall fetch shape. Some FXServer versions are
-        // picky about an explicit Content-Type with an empty body, so omit it.
         return fetch('https://' + RESOURCE + '/' + action, {
             method: 'POST',
             body: '{}'
         }).catch(function () {});
     }
+    function bust(url) {
+        if (!url) return url;
+        return url + (url.indexOf('?') === -1 ? '?' : '&') + '_cb=' + Date.now();
+    }
 
     function openTablet(url, dimmer) {
-        // Only load the URL on first open — preserve session on subsequent opens
         if (tabletURL !== url) {
             tabletURL = url;
-            tabletFrame.src = url;
+            tabletFrame.src = bust(url);
         }
         dimmerEnabled = !!dimmer;
         tablet.classList.remove('hidden');
@@ -140,7 +134,7 @@
 
             case 'reloadTablet':
                 if (tabletURL) {
-                    tabletFrame.src = tabletURL;
+                    tabletFrame.src = bust(tabletURL);
                 }
                 break;
 
