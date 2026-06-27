@@ -20,7 +20,7 @@ Config.TabletDescription = "Open/Close CAD Tablet"
 
 -- Dim the tablet when the mouse moves outside of it
 -- When true, the tablet fades to 15% opacity when the cursor leaves it
-Config.TabletDimmer = false
+Config.TabletDimmer = true
 
 -- Prevent the tablet from auto-redirecting to /home after login
 -- When true, the NUI will block navigation to /home and stay on the current page
@@ -548,36 +548,48 @@ Config.Commands = {
 Config.IDCard = {
     -- Show HTML ID card UI
     ShowHTML = true,
-    
+
+    -- Which renderer to use when the HTML card is shown.
+    --   'template' — pulls a baked PNG of the civilian's data composited on
+    --                the community-uploaded license template (managed from
+    --                the Community Admin panel → Settings → License
+    --                Templates). Falls back to the classic card if no
+    --                template is configured.
+    --   'html'     — the legacy hard-coded HTML card (uses CardStyle below).
+    --   'auto'     — try the template renderer first; if the community
+    --                hasn't uploaded one, render the classic HTML card.
+    LicenseMode = 'auto',
+
     -- Also output to chat/skybox
     ShowInChat = true,
-    
+
     -- Use ox_lib notify for ID display (alternative to HTML)
     UseOxNotify = false,
-    
+
     -- ID card display duration (ms)
     DisplayDuration = 10000,
-    
+
     -- Range for nearby players to see ID (in meters)
     ShowRange = 3.0,
-    
+
     -- Enable ox_target integration (look at player -> Show ID / Request ID)
     UseOxTarget = true,
-    
-    -- ID Card appearance (fallback if community settings not available)
+
+    -- ID Card appearance (used by LicenseMode = 'html' and as fallback for
+    -- 'auto' when no template is configured for this community).
     CardStyle = {
         -- State name on the ID
         StateName = 'San Andreas',
-        
+
         -- Card title
         CardTitle = "DRIVER'S LICENSE",
-        
+
         -- Background color (hex)
         BackgroundColor = '#1a365d',
-        
+
         -- Text color (hex)
         TextColor = '#ffffff',
-        
+
         -- Accent color (hex)
         AccentColor = '#3182ce'
     }
@@ -620,6 +632,8 @@ Config.VehicleRegistration = {
     -- Enable vehicle registration
     Enabled = true,
     
+    -- Registration fee
+    Fee = 500,
     
     -- Require player to be in vehicle to register
     RequireInVehicle = true,
@@ -708,17 +722,18 @@ Config.NPCReports = {
     Enabled = true,
     Gunshots = {
         Enabled  = true,
-        Cooldown = 60,
-        Radius   = 200.0,
+        Cooldown = 60,      -- seconds between gunshot reports from same player
+        Radius   = 200.0,   -- NPCs within this many GTA units must be alive to "witness"
     },
     Fights = {
         Enabled  = true,
         Cooldown = 60,
     },
+    -- Speed cameras: add { coords = vector3(x,y,z), speedLimit = 50, name = "..." } entries
     SpeedCamera = {
-        Enabled  = false,
-        Cooldown = 60,
-        Cameras  = {},
+        Enabled    = false,
+        Cooldown   = 60,
+        Cameras    = {},
     },
 }
     _G.Cad911Config = Config
@@ -730,13 +745,17 @@ end
 do
     local Config = {}
 
+    -- Master toggle. When false the wraith client/server scripts return
+    -- immediately and register no events, threads, or commands.
     Config.Enabled = true
+
+    -- API URL + key + community ID come from convars (read at the top of each module's server.lua).
 
     Config.PlateReader = {
         LookupOnLock           = true,
         LookupOnScan           = true,
         LookupCooldown         = 10,
-        OnlyPlayerPlates       = true ,
+        OnlyPlayerPlates       = false,
         IgnoreEmergencyVehicles = true,
         ShowCleanScans         = true,
         EmergencyVehicleModels = {
@@ -782,7 +801,11 @@ end
 do
     local Config = {}
 
+    -- Master toggle. When false the ers client/server scripts return
+    -- immediately and register no events, threads, or commands.
     Config.Enabled = true
+
+    -- CADEndpoint + APIKey come from convars (read at the top of each module's server.lua).
 
     Config.EnableDebug             = false
     Config.CreateCallOnAccept      = true
@@ -797,4 +820,64 @@ do
     Config.ToggleDutyOnShift       = true
 
     _G.ErsConfig = Config
+end
+
+-- ════════════════════════════════════════════════════════════════════
+-- PANIC BUTTON
+-- ════════════════════════════════════════════════════════════════════
+do
+    local Config
+Config = {}
+
+Config.Debug = false                     -- Print HTTP request/response debug info
+
+-- ═══════════════════════════════════════════════════════════════════
+-- COMMAND & KEYBIND
+-- ═══════════════════════════════════════════════════════════════════
+Config.Command       = 'panic'      -- Chat command (/panic)
+Config.KeybindKey    = 'Y'          -- Default key (players can rebind in FiveM settings)
+Config.KeybindLabel  = 'Panic Button'
+
+Config.CooldownSeconds     = 30     -- Cooldown between panic activations (per player)
+Config.BlipDurationSeconds = 60     -- How long the red blip/route shows
+
+-- ═══════════════════════════════════════════════════════════════════
+-- DUTY RESTRICTIONS
+-- ═══════════════════════════════════════════════════════════════════
+-- Only on-duty LEOs may activate the panic button, and only on-duty LEOs
+-- receive the panic blip/route/alert. Uses the bundle's own duty state
+-- (the duty module's IsOnDutyLEO / IsPlayerOnDutyLEO / GetOnDutyLEOUnits).
+Config.RequireOnDutyLEO   = true    -- Only on-duty LEOs can press panic
+Config.BroadcastToLEOOnly = true    -- Only on-duty LEOs receive the alert
+
+-- ═══════════════════════════════════════════════════════════════════
+-- AUTO 911 CALL
+-- ═══════════════════════════════════════════════════════════════════
+Config.Auto911          = true              -- Automatically create a 911 call on panic
+Config.Auto911CallType  = 'Officer Panic'   -- Call type shown in CAD
+Config.Auto911Caller    = 'SYSTEM - PANIC'  -- Caller name shown in CAD
+
+-- ═══════════════════════════════════════════════════════════════════
+-- BLIP SETTINGS
+-- ═══════════════════════════════════════════════════════════════════
+Config.BlipSprite   = 526   -- Blip icon (526 = skull / danger)
+Config.BlipColor    = 1     -- Red
+Config.BlipScale    = 1.5   -- Blip size on map
+Config.BlipFlashes  = true  -- Blip flashes on minimap
+Config.ShowRoute    = true  -- Draw GPS route to panicking officer
+
+-- ═══════════════════════════════════════════════════════════════════
+-- CHAT MESSAGES
+-- ═══════════════════════════════════════════════════════════════════
+Config.ChatEnabled = true
+Config.ChatColor   = { 255, 50, 50 }  -- Red text
+
+Config.Messages = {
+    activated = '^1[PANIC] ^0Officer ^3%s^0 has activated their panic button! Location: ^3%s',
+    cooldown  = '^1[PANIC] ^0You must wait %d seconds before using panic again.',
+    cleared   = '^1[PANIC] ^0Panic alert for ^3%s^0 has expired.',
+    notOnDuty = '^1[PANIC] ^0Only on-duty LEOs can use the panic button.',
+}
+
+    _G.PanicConfig = Config
 end
