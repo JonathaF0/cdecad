@@ -1,8 +1,8 @@
 fx_version 'cerulean'
 game 'gta5'
 
-name 'CDECAD_Template'
-description 'CDECAD_Template with SA lore departments (LSPD, LCSO, SASP, BCSO, LSFD, BCFD). Drop-in alternative to CDECAD.'
+name 'CDECAD'
+description 'CDECAD unified resource: tablet + duty + civ + 911 + wraith + ers'
 author 'CDECAD'
 version '1.0.0'
 
@@ -18,6 +18,7 @@ server_scripts {
     'tablet/server_main.lua',
     'duty/server.lua',
     'duty/diagnostics.lua',
+    'panic/server.lua',
     '@oxmysql/lib/MySQL.lua',
     'civ/server_main.lua',
     '911/server.lua',
@@ -29,6 +30,7 @@ client_scripts {
     'tablet/client_main.lua',
     'duty/client.lua',
     'duty/diagnostics.lua',
+    'panic/client.lua',
     'civ/client_main.lua',
     'civ/client_nui.lua',
     '911/client.lua',
