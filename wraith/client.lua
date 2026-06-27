@@ -1,23 +1,12 @@
 do
     local Config = WraithConfig
     if not Config or not Config.Enabled then return end
---[[
-    CDE Wraith ARS 2X Integration - Client
-    Handles displaying plate reader results to the player
-]]
 
 print('[CDE-Wraith] Client script LOADED (build with /cdetestlock and /cdetestscan)')
 
 local isDisplaying = false
 local hideTimer = nil
 
--- =============================================================================
--- DIAGNOSTIC COMMANDS
--- =============================================================================
-
--- /cdetestlock [plate] — fires wk:onPlateLocked from the client exactly as
--- Wraith would, so we can prove whether the issue is upstream (Wraith/LuxArt
--- isn't emitting the event) or in our server handler.
 RegisterCommand('cdetestlock', function(source, args)
     local plate = args[1] or 'TEST123'
     print(('[CDE-Wraith] CLIENT firing TriggerServerEvent("wk:onPlateLocked", "front", "%s", 0)'):format(plate))
@@ -31,14 +20,6 @@ RegisterCommand('cdetestscan', function(source, args)
     TriggerServerEvent('wk:onPlateScanned', 'front', plate, 0)
 end, false)
 
--- =============================================================================
--- LEGACY CLIENT BRIDGE (no-op on wk_wars2x v1.3.1+)
--- =============================================================================
--- wk_wars2x v1.3.1+ fires `wk:onPlateLocked` / `wk:onPlateScanned` via
--- TriggerServerEvent directly, so the server receives them without any
--- client involvement. These local handlers are a fallback for older builds
--- that fire the events as client-local TriggerEvent. Server-side cooldowns
--- + the server-authoritative player/emergency filter make double-fire safe.
 
 AddEventHandler('wk:onPlateLocked', function(cam, plate, index)
     if not plate or plate == '' then return end
@@ -50,14 +31,7 @@ AddEventHandler('wk:onPlateScanned', function(cam, plate, index)
     TriggerServerEvent('wk:onPlateScanned', cam, plate, index)
 end)
 
--- =============================================================================
--- RECEIVE PLATE RESULTS FROM SERVER
--- =============================================================================
 
--- Client-side emergency-vehicle filter for scans. GetVehicleClass is client-only
--- in FiveM so the server can't run this check; the officer's client always has
--- the scanned vehicle streamed in (they're looking at it), making this the
--- right place to do it. Class 18 = Emergency.
 local function NormalizePlateLocal(p)
     if not p then return '' end
     return (p:gsub('%s', '')):upper()
@@ -167,10 +141,6 @@ function ShowNUIResult(data, cam)
         data = data,
         cam = cam,
     })
-
-    SetNuiFocus(false, false) -- Don't steal mouse focus
-
-    -- Auto-hide after duration
     if Config.Display.DisplayDuration > 0 then
         -- Cancel any existing hide timer
         if hideTimer then
@@ -269,20 +239,12 @@ function ShowOxLibNotification(data, cam)
     })
 end
 
--- =============================================================================
--- NUI CALLBACKS
--- =============================================================================
 
 RegisterNUICallback('closePlateResult', function(data, cb)
     HideNUIResult()
     cb('ok')
 end)
 
--- =============================================================================
--- KEY BINDING TO DISMISS
--- =============================================================================
-
--- Press Backspace to dismiss the plate result popup
 CreateThread(function()
     while true do
         Wait(0)
