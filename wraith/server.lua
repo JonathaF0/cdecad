@@ -12,46 +12,25 @@ do
     end
     Config.API_KEY      = GetConvar('CDE_CAD_API_KEY', '')
     Config.COMMUNITY_ID = GetConvar('CDE_CAD_COMMUNITY_ID', '')
---[[
-    CDE Wraith ARS 2X Integration - Server
-    Handles Wraith events and queries the CDECAD plate reader API.
-
-    Lock path = full live API lookup (unchanged from the original baseline).
-    Scan path = local cache match only (zero API calls per scan).
-    The flagged-plates cache is rebuilt on resource start and every 60 minutes.
-]]
 
 -- =============================================================================
 -- CONSTANTS
 -- =============================================================================
 
--- Non-configurable: how often the flagged-plates cache is rebuilt from CAD.
--- 60 minutes is a deliberate product decision — do not expose to config.
 local CACHE_REFRESH_MS = 60 * 60 * 1000
 
 -- =============================================================================
 -- STATE
 -- =============================================================================
 
--- Per-plate cooldown for the full lookup path (unchanged)
 local plateCache = {}
-
--- Bulk flagged-plates cache for scan-time matching.
--- Shape: flaggedCache[NORMALIZED_PLATE] = { flags = {...}, alertLevel = 'caution'|'alert' }
 local flaggedCache = {}
 local flaggedCacheGeneratedAt = nil
 local flaggedCacheCount = 0
-
--- Set of every plate registered in CAD but unflagged. Used to tell
--- "not in CAD" from "in CAD but clean" without an API call per scan.
--- Shape: registeredCache[NORMALIZED_PLATE] = true
 local registeredCache = {}
 local registeredCacheCount = 0
-
--- Per-(src, plate) dedup for scan-miss "not in system" feedback so wk_wars2x's
--- high scan rate doesn't flood chat with repeats of the same plate.
-local scanMissCooldown = {}
-local SCAN_MISS_COOLDOWN_S = 30
+local scanResultCooldown = {}
+local SCAN_RESULT_COOLDOWN_S = 30
 
 -- =============================================================================
 -- HELPERS
@@ -67,14 +46,6 @@ local function NormalizePlate(plate)
     if not plate then return '' end
     return (plate:gsub('%s', '')):upper()
 end
-
--- Server-side check: is there a player currently sitting in a vehicle whose
--- plate matches this one? Returns the vehicle entity ID (or nil). Iterates
--- all online players — fine at typical FiveM player counts (~64).
---
--- Important: this must run server-side because wk_wars2x v1.3.1+ fires
--- wk:onPlateScanned via TriggerServerEvent directly. The client never sees
--- a local event, so a client-side filter doesn't get a chance to run.
 local function FindPlayerVehicleByPlate(plate)
     local target = NormalizePlate(plate)
     if target == '' then return nil end
@@ -96,7 +67,6 @@ local function FindPlayerVehicleByPlate(plate)
     return nil
 end
 
--- Built lazily from Config.PlateReader.EmergencyVehicleModels on first use.
 local emergencyModelHashes = nil
 
 local function IsEmergencyVehicle(veh)
@@ -104,7 +74,6 @@ local function IsEmergencyVehicle(veh)
     if not Config.PlateReader.EmergencyVehicleModels then return false end
     local model = GetEntityModel(veh)
     if not model then return false end
-    -- Build the model-hash set lazily so config edits without restart still apply.
     if not emergencyModelHashes then
         emergencyModelHashes = {}
         for _, name in ipairs(Config.PlateReader.EmergencyVehicleModels) do
@@ -279,10 +248,6 @@ end
 
 RegisterNetEvent('wk:onPlateLocked', HandlePlateLocked)
 
--- Scan: local cache check ONLY. Never hits the API. Flagged plates fire the
--- standard alert; clean plates fire a "not in system" payload so the reader
--- isn't silent for every car on the road. Per-(src, plate) cooldown keeps the
--- not-found path from flooding chat (wk_wars2x scans each plate many times/min).
 local scanProbeCount = 0
 
 RegisterNetEvent('wk:onPlateScanned', function(cam, plate, index)
@@ -293,9 +258,6 @@ RegisterNetEvent('wk:onPlateScanned', function(cam, plate, index)
 
     local src = source
 
-    -- Plate-pattern emergency check runs first because it doesn't need a
-    -- player vehicle match — useful when the cruiser model isn't in the
-    -- whitelist but the plate scheme tells us it's a department car.
     if Config.PlateReader.IgnoreEmergencyVehicles and MatchesEmergencyPlate(cleanPlate) then
         if Config.Debug then
             print(('[CDE-Wraith] scan filter: plate=%s skipped by EmergencyPlatePatterns'):format(cleanPlate))
@@ -303,9 +265,7 @@ RegisterNetEvent('wk:onPlateScanned', function(cam, plate, index)
         return
     end
 
-    -- Server-authoritative player + emergency-vehicle filter. Runs unconditionally
-    -- because wk_wars2x emits this event server-side directly — a client filter
-    -- would never get a chance to run.
+
     local playerVerified = false
     if Config.PlateReader.OnlyPlayerPlates or Config.PlateReader.IgnoreEmergencyVehicles then
         local veh, ownerSrc = FindPlayerVehicleByPlate(cleanPlate)
@@ -345,6 +305,13 @@ RegisterNetEvent('wk:onPlateScanned', function(cam, plate, index)
     local function fire(allowed)
         if not allowed then return end
 
+        local key = tostring(src) .. ':' .. cleanPlate
+        local now = os.time()
+        if scanResultCooldown[key] and (now - scanResultCooldown[key]) < SCAN_RESULT_COOLDOWN_S then
+            return
+        end
+        scanResultCooldown[key] = now
+
         if hit then
             TriggerClientEvent('cde-wraith:plateResult', src, {
                 success = true,
@@ -357,17 +324,7 @@ RegisterNetEvent('wk:onPlateScanned', function(cam, plate, index)
             return
         end
 
-        local key = tostring(src) .. ':' .. cleanPlate
-        local now = os.time()
-        if scanMissCooldown[key] and (now - scanMissCooldown[key]) < SCAN_MISS_COOLDOWN_S then
-            return
-        end
-        scanMissCooldown[key] = now
 
-        -- Player-verified cache miss. Distinguish "not in CAD at all"
-        -- (registeredCache miss) from "in CAD but unflagged-clean"
-        -- (registeredCache hit). The former is a caution; the latter is a
-        -- low-key CLEAN line (or silent if ShowCleanScans=false).
         if playerVerified then
             if registeredCache[cleanPlate] then
                 if Config.PlateReader.ShowCleanScans then
@@ -474,8 +431,6 @@ RegisterCommand('platelookup', function(source, args)
     LookupPlate(plate, source, 'manual')
 end, false)
 
--- Diagnostic: prove the LookupPlate pipeline works without depending on
--- Wraith's wk:onPlateLocked event. Usage: /cdewraithtest [plate]
 RegisterCommand('cdewraithtest', function(source, args)
     local plate = args[1] or 'TEST123'
     print(('[CDE-Wraith] SELF-TEST invoked by source=%s plate=%s'):format(tostring(source), plate))
@@ -537,9 +492,9 @@ CreateThread(function()
                 cleared = cleared + 1
             end
         end
-        for k, t in pairs(scanMissCooldown) do
-            if (now - t) > SCAN_MISS_COOLDOWN_S * 2 then
-                scanMissCooldown[k] = nil
+        for k, t in pairs(scanResultCooldown) do
+            if (now - t) > SCAN_RESULT_COOLDOWN_S * 2 then
+                scanResultCooldown[k] = nil
             end
         end
         if cleared > 0 then
@@ -574,9 +529,7 @@ print('[CDE-Wraith] Debug: ' .. tostring(Config.Debug) ..
 print('[CDE-Wraith] Listening for wk:onPlateLocked (TriggerServerEvent from Wraith client)')
 print('[CDE-Wraith] Test: /cdewraithtest [plate] or /platelookup [plate]')
 
--- Dependency probe: report whether wk_wars2x is actually present and started.
--- If this prints anything other than 'started' the integration has nothing to
--- listen to, which explains silent lock/scan paths.
+
 CreateThread(function()
     Wait(2000) -- let all resources settle
     local state = GetResourceState('wk_wars2x')
