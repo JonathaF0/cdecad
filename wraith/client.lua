@@ -1,37 +1,67 @@
 do
     local Config = WraithConfig
     if not Config or not Config.Enabled then return end
+--[[
+    CDE Wraith ARS 2X Integration - Client
+    Handles displaying plate reader results to the player
+]]
 
 print('[CDE-Wraith] Client script LOADED (build with /cdetestlock and /cdetestscan)')
 
 local isDisplaying = false
 local hideTimer = nil
 
+-- =============================================================================
+-- DIAGNOSTIC COMMANDS
+-- =============================================================================
+
+-- /cdetestlock [plate] - fire wk:onPlateLocked as wraith would
 RegisterCommand('cdetestlock', function(source, args)
     local plate = args[1] or 'TEST123'
     print(('[CDE-Wraith] CLIENT firing TriggerServerEvent("wk:onPlateLocked", "front", "%s", 0)'):format(plate))
     TriggerServerEvent('wk:onPlateLocked', 'front', plate, 0)
 end, false)
 
--- /cdetestscan [plate] — same but for the scan event
+-- /cdetestscan [plate] - same but for the scan event
 RegisterCommand('cdetestscan', function(source, args)
     local plate = args[1] or 'TEST456'
     print(('[CDE-Wraith] CLIENT firing TriggerServerEvent("wk:onPlateScanned", "front", "%s", 0)'):format(plate))
     TriggerServerEvent('wk:onPlateScanned', 'front', plate, 0)
 end, false)
 
+-- =============================================================================
+-- LEGACY CLIENT BRIDGE (no-op on wk_wars2x v1.3.1+)
+-- =============================================================================
+-- fallback for older builds that fire these as client-local events;
+-- v1.3.1+ fires TriggerServerEvent directly. server-side cooldowns make
+-- double-fire safe.
 
-AddEventHandler('wk:onPlateLocked', function(cam, plate, index)
+-- some forks pass a single table instead of (cam, plate, index)
+local function WkArgs(a, b, c)
+    if type(a) == 'table' then
+        return a.cam or a.camera or a.antenna or a.ant, a.plate, a.index
+    end
+    return a, b, c
+end
+
+AddEventHandler('wk:onPlateLocked', function(a, b, c)
+    local cam, plate, index = WkArgs(a, b, c)
     if not plate or plate == '' then return end
     TriggerServerEvent('wk:onPlateLocked', cam, plate, index)
 end)
 
-AddEventHandler('wk:onPlateScanned', function(cam, plate, index)
+AddEventHandler('wk:onPlateScanned', function(a, b, c)
+    local cam, plate, index = WkArgs(a, b, c)
     if not plate or plate == '' then return end
     TriggerServerEvent('wk:onPlateScanned', cam, plate, index)
 end)
 
+-- =============================================================================
+-- RECEIVE PLATE RESULTS FROM SERVER
+-- =============================================================================
 
+-- emergency-vehicle filter for scans. GetVehicleClass is client-only,
+-- so this check can't run on the server. class 18 = emergency.
 local function NormalizePlateLocal(p)
     if not p then return '' end
     return (p:gsub('%s', '')):upper()
@@ -52,26 +82,31 @@ RegisterNetEvent('cde-wraith:plateResult')
 AddEventHandler('cde-wraith:plateResult', function(data, cam)
     if not data then return end
 
-    -- Suppress display for emergency-class vehicles on the scan path.
-    -- Locks bypass this because the officer explicitly requested the lookup.
+    -- skip emergency-class vehicles on scans; locks bypass this filter
     if data.cached and Config.PlateReader.IgnoreEmergencyVehicles and data.plate then
         if ScannedVehicleIsEmergency(data.plate) then
             return
         end
     end
 
-    -- Show chat message
+    -- feed the /reader console; passive iframe, never takes focus
+    SendNUIMessage({ action = 'readerScan', data = data, cam = cam })
+
     if Config.Display.ShowChat then
         ShowChatResult(data, cam)
     end
 
-    -- Show NUI popup (but not for low-key CLEAN cached scans — chat line is enough).
+    -- never show the popup while another NUI holds focus: the cursor
+    -- hit-test does not reliably honor pointer-events:none on it, so it
+    -- can capture input from the focused NUI. locks always pop (even
+    -- NOT ON FILE); scans only pop for found, non-clean results.
     local isCleanScan = data.cached and data.alertLevel == 'none'
-    if Config.Display.ShowPopup and data.found and not isCleanScan then
+    local wantPopup = Config.Display.ShowPopup
+        and ((not data.cached) or (data.found and not isCleanScan))
+    if wantPopup and not IsNuiFocused() then
         ShowNUIResult(data, cam)
     end
 
-    -- Show ox_lib notification
     if Config.Notifications.UseOxLib then
         ShowOxLibNotification(data, cam)
     end
@@ -91,7 +126,7 @@ function ShowChatResult(data, cam)
         return
     end
 
-    -- Cached scan-hits don't have vehicle/owner data — emit a compact alert line.
+    -- cached scan hits have no vehicle/owner data; compact alert line only
     if data.cached then
         if data.alertLevel == 'none' then
             TriggerEvent('chat:addMessage', {
@@ -141,8 +176,12 @@ function ShowNUIResult(data, cam)
         data = data,
         cam = cam,
     })
+
+    -- no SetNuiFocus here: SetNuiFocus(false, false) would release focus
+    -- held by another NUI (e.g. the CAD tablet)
+
+    -- auto-hide after duration
     if Config.Display.DisplayDuration > 0 then
-        -- Cancel any existing hide timer
         if hideTimer then
             hideTimer = nil
         end
@@ -185,7 +224,6 @@ function ShowOxLibNotification(data, cam)
         return
     end
 
-    -- Determine notification type based on alert level
     local notifType = 'success'
     if data.alertLevel == 'caution' then
         notifType = 'warning'
@@ -193,7 +231,7 @@ function ShowOxLibNotification(data, cam)
         notifType = 'error'
     end
 
-    -- Cached scan hit: short notification with flags only.
+    -- cached scan hit: short notification with flags only
     if data.cached then
         lib.notify({
             title = 'Plate: ' .. plate,
@@ -239,12 +277,158 @@ function ShowOxLibNotification(data, cam)
     })
 end
 
+-- =============================================================================
+-- IN-CAR ALPR CONSOLE (/reader)
+-- =============================================================================
+-- rolling list of wraith reads with CAD status, plus last-read display.
+-- fully passive: pointer-events:none, never takes NUI focus.
+
+if Config.Reader and Config.Reader.Enabled then
+    local readerVisible = false
+
+    local readerCmd = Config.Reader.Command or 'reader'
+    RegisterCommand(readerCmd, function()
+        readerVisible = not readerVisible
+        SendNUIMessage({ action = readerVisible and 'readerShow' or 'readerHide' })
+        TriggerEvent('chat:addMessage', {
+            args = { '^3[ALPR]', readerVisible and 'Plate reader console ON.' or 'Plate reader console OFF.' }
+        })
+    end, false)
+    TriggerEvent('chat:addSuggestion', '/' .. readerCmd, 'Toggle the in-car ALPR reader console')
+    -- bindable in Settings > Key Bindings > FiveM (unbound by default)
+    RegisterKeyMapping(readerCmd, 'Toggle ALPR reader console', 'keyboard', '')
+
+    -- ── Independent full-traffic sweep ─────────────────────────────────
+    -- wraith only emits events for select scans, so the console sweeps
+    -- every nearby vehicle itself while open. results come back
+    -- display-only via cdecad-reader:result (no popups, alerts, or 911s).
+    local readerSeen = {}  -- [plate] = GetGameTimer ms of last report
+
+    local function ReaderSweep()
+        local ped = PlayerPedId()
+        local myVeh = GetVehiclePedIsIn(ped, false)
+        if myVeh == 0 then return end
+        local myPos = GetEntityCoords(myVeh)
+        local fwd = GetEntityForwardVector(myVeh)
+        local radius = Config.Reader.ScanRadius or 45.0
+        local cooldownMs = (Config.Reader.PlateCooldown or 45) * 1000
+        local now = GetGameTimer()
+        local batch = {}
+        for _, veh in ipairs(GetGamePool('CVehicle')) do
+            if veh ~= myVeh and DoesEntityExist(veh) then
+                local vpos = GetEntityCoords(veh)
+                local dx, dy = vpos.x - myPos.x, vpos.y - myPos.y
+                if math.sqrt(dx * dx + dy * dy) <= radius then
+                    local plate = (GetVehicleNumberPlateText(veh) or ''):gsub('%s', ''):upper()
+                    if plate ~= '' and (not readerSeen[plate] or (now - readerSeen[plate]) > cooldownMs) then
+                        readerSeen[plate] = now
+                        -- front/rear antenna by position relative to the patrol car
+                        local dot = dx * fwd.x + dy * fwd.y
+                        batch[#batch + 1] = { plate = plate, cam = dot >= 0 and 'front' or 'rear' }
+                        if #batch >= 12 then break end
+                    end
+                end
+            end
+        end
+        if #batch > 0 then
+            TriggerServerEvent('cdecad-reader:check', batch)
+        end
+    end
+
+    CreateThread(function()
+        while true do
+            Wait(Config.Reader.ScanInterval or 1500)
+            if readerVisible then ReaderSweep() end
+        end
+    end)
+
+    CreateThread(function()
+        while true do
+            Wait(60000)
+            local now = GetGameTimer()
+            for p, t in pairs(readerSeen) do
+                if (now - t) > 180000 then readerSeen[p] = nil end
+            end
+        end
+    end)
+
+    RegisterNetEvent('cdecad-reader:result')
+    AddEventHandler('cdecad-reader:result', function(results)
+        if type(results) ~= 'table' then return end
+        for _, r in ipairs(results) do
+            if type(r) == 'table' and r.data then
+                SendNUIMessage({ action = 'readerScan', data = r.data, cam = r.cam })
+            end
+        end
+    end)
+end
+
+-- =============================================================================
+-- CAD LOCK FALLBACK KEYS (work on ANY wk_wars2x build)
+-- =============================================================================
+-- some wk builds show LOCKED but never emit wk:onPlateLocked. these
+-- commands lock the vehicle ahead/behind through the same server
+-- pipeline as a stock 1.3.1 lock.
+
+if Config.LockFallback and Config.LockFallback.Enabled then
+    local function LockDirection(cam)
+        local ped = PlayerPedId()
+        local myVeh = GetVehiclePedIsIn(ped, false)
+        if myVeh == 0 then
+            TriggerEvent('chat:addMessage', { args = { '^1[Wraith]', 'You must be in a vehicle to lock a plate.' } })
+            return
+        end
+        local myPos = GetEntityCoords(myVeh)
+        local fwd = GetEntityForwardVector(myVeh)
+        local wantFront = cam == 'front'
+        local best, bestDist = nil, (Config.LockFallback.Range or 35.0)
+        for _, veh in ipairs(GetGamePool('CVehicle')) do
+            if veh ~= myVeh and DoesEntityExist(veh) then
+                local vpos = GetEntityCoords(veh)
+                local dx, dy = vpos.x - myPos.x, vpos.y - myPos.y
+                local dist = math.sqrt(dx * dx + dy * dy)
+                if dist > 0.5 and dist < bestDist then
+                    local dot = (dx * fwd.x + dy * fwd.y) / dist
+                    if (wantFront and dot > 0.4) or (not wantFront and dot < -0.4) then
+                        best, bestDist = veh, dist
+                    end
+                end
+            end
+        end
+        if not best then
+            TriggerEvent('chat:addMessage', { args = { '^3[Wraith]', ('No vehicle in range to lock (%s).'):format(cam) } })
+            return
+        end
+        local plate = (GetVehicleNumberPlateText(best) or ''):gsub('%s', ''):upper()
+        if plate == '' then return end
+        TriggerServerEvent('wk:onPlateLocked', cam, plate, 0)
+        -- mirror the lock onto the wraith unit display via wk's export
+        TriggerServerEvent('cde-wraith:lockWkDisplay', cam)
+    end
+
+    RegisterCommand('cdelockfront', function() LockDirection('front') end, false)
+    RegisterCommand('cdelockrear',  function() LockDirection('rear')  end, false)
+    -- bindable in Settings > Key Bindings > FiveM (unbound by default)
+    RegisterKeyMapping('cdelockfront', 'CAD: lock plate ahead (front antenna)', 'keyboard', '')
+    RegisterKeyMapping('cdelockrear',  'CAD: lock plate behind (rear antenna)', 'keyboard', '')
+    TriggerEvent('chat:addSuggestion', '/cdelockfront', 'Lock the plate of the vehicle ahead into the CAD')
+    TriggerEvent('chat:addSuggestion', '/cdelockrear', 'Lock the plate of the vehicle behind into the CAD')
+end
+
+-- =============================================================================
+-- NUI CALLBACKS
+-- =============================================================================
 
 RegisterNUICallback('closePlateResult', function(data, cb)
     HideNUIResult()
     cb('ok')
 end)
 
+-- =============================================================================
+-- KEY BINDING TO DISMISS
+-- =============================================================================
+
+-- backspace dismisses the plate result popup
 CreateThread(function()
     while true do
         Wait(0)
