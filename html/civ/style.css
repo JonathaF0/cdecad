@@ -290,9 +290,7 @@ body {
     background: linear-gradient(135deg, #44337a 0%, #6b46c1 50%, #44337a 100%);
 }
 
-/* =============================================================================
-   BANK PANEL — Matches cad-tablet dark-navy theme
-   ============================================================================= */
+/* Bank panel - matches the cad-tablet dark navy theme */
 
 #bank-panel {
     position: fixed;
@@ -724,7 +722,7 @@ body {
 .form-msg.success { background: rgba(16,185,129,0.12); color: #10b981; border: 1px solid rgba(16,185,129,0.25); }
 .form-msg.error   { background: rgba(239,68,68,0.12);  color: #ef4444;  border: 1px solid rgba(239,68,68,0.25); }
 
-/* ─── Admin Bank Panel ──────────────────────────────────────────────── */
+/* Admin bank panel */
 .admin-bank-modal { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.55); z-index: 9999; }
 .admin-bank-modal.hidden { display: none; }
 .admin-bank-card { width: min(720px, 92vw); max-height: 80vh; overflow: auto; background: #0f172a; color: #e2e8f0; border: 1px solid #1e293b; border-radius: 10px; padding: 18px; box-shadow: 0 20px 50px rgba(0,0,0,.4); }
