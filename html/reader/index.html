@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CDE ALPR Reader</title>
+<style>
+    /* In-car mobile LPR console. Runs in a passive iframe
+       (pointer-events:none at the parent) so it never captures input. */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { background: transparent; width: 100%; height: 100%; overflow: hidden;
+        font-family: Tahoma, 'Segoe UI', Verdana, sans-serif; }
+
+    #console {
+        position: fixed;
+        right: 10px; top: 50%;
+        transform: translateY(-50%);
+        width: 400px;
+        display: none;
+        flex-direction: column;
+        background: #14202e;
+        border: 1px solid #4a5c70;
+        outline: 1px solid #05090e;
+        box-shadow: 0 6px 30px rgba(0,0,0,0.7);
+        color: #c9d4df;
+        font-size: 11px;
+    }
+    #console.on { display: flex; }
+
+    /* Window title bar */
+    #title {
+        display: flex; align-items: center;
+        background: linear-gradient(180deg, #3b5876 0%, #24384e 100%);
+        border-bottom: 1px solid #0a141f;
+        padding: 4px 8px;
+        font-size: 11px; font-weight: 700; color: #e8eef4;
+    }
+    #title .ic { width: 12px; height: 12px; background: #7da4c8; margin-right: 6px;
+        display: inline-block; border: 1px solid #0a141f; }
+    #title .btns { margin-left: auto; display: flex; gap: 3px; }
+    #title .btns span {
+        width: 14px; height: 13px; display: inline-block; text-align: center;
+        background: linear-gradient(180deg, #5a6f84, #37485a);
+        border: 1px solid #0a141f; color: #dfe7ee;
+        font-size: 9px; line-height: 12px; font-weight: 700;
+    }
+
+    /* Menu strip */
+    #menu {
+        display: flex; gap: 14px;
+        background: #1b2a3b; border-bottom: 1px solid #0a141f;
+        padding: 3px 10px; font-size: 10px; color: #93a6b8;
+    }
+    #menu .clock { margin-left: auto; font-family: 'Consolas', monospace; color: #b8c6d4; }
+
+    /* Camera feed panels */
+    #cams { display: flex; gap: 1px; background: #0a141f; }
+    .camBox { flex: 1; background: #10151b; }
+    .camHdr {
+        background: linear-gradient(180deg, #2c4258, #1d2d40);
+        border-bottom: 1px solid #0a141f;
+        padding: 3px 7px; font-size: 9px; font-weight: 700;
+        letter-spacing: 1px; color: #aebfcf;
+        display: flex; justify-content: space-between;
+    }
+    .camHdr .live { color: #67d27e; }
+    .camView {
+        position: relative; height: 96px;
+        background:
+            repeating-linear-gradient(0deg, rgba(255,255,255,0.022) 0 1px, transparent 1px 3px),
+            radial-gradient(ellipse at 50% 40%, #232f3c 0%, #10161d 70%);
+        display: flex; align-items: center; justify-content: center;
+        overflow: hidden;
+    }
+    .camPlate {
+        background: #eef1f4;
+        border: 2px solid #202b38;
+        padding: 4px 10px;
+        font-family: 'Consolas', 'Courier New', monospace;
+        font-size: 19px; font-weight: 800; letter-spacing: 2px; color: #10161f;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    }
+    .camIdle { color: #46586a; font-size: 10px; letter-spacing: 2px; }
+    .camTs {
+        position: absolute; left: 5px; bottom: 4px;
+        font-family: 'Consolas', monospace; font-size: 9px; color: #8ba0b4;
+        text-shadow: 0 1px 1px #000;
+    }
+
+    /* Current-read status strip */
+    #statusStrip {
+        padding: 5px 8px;
+        border-top: 1px solid #33465e; border-bottom: 1px solid #0a141f;
+        font-size: 12px; font-weight: 800; letter-spacing: 1px; text-align: center;
+        background: #182636; color: #7d93a8;
+    }
+    #statusStrip.clean   { background: #12301d; color: #6fdc8c; }
+    #statusStrip.caution { background: #3a2c10; color: #f0b840; }
+    #statusStrip.alert   { background: #47131a; color: #ff8d97; animation: flash 0.7s infinite; }
+    @keyframes flash { 50% { background: #7a1622; color: #fff; } }
+
+    /* Read grid */
+    #grid { border-collapse: collapse; width: 100%; table-layout: fixed; }
+    #grid th {
+        background: linear-gradient(180deg, #2c4258, #1d2d40);
+        border: 1px solid #0a141f; border-top: none;
+        padding: 3px 6px; font-size: 9px; letter-spacing: 1px;
+        color: #aebfcf; text-align: left; font-weight: 700;
+    }
+    #grid td {
+        border: 1px solid #22303f;
+        padding: 3px 6px;
+        font-size: 10px; color: #c2cedb;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    }
+    #grid tr:nth-child(even) td { background: #16222f; }
+    #grid tr:nth-child(odd)  td { background: #121c28; }
+    #grid td.p { font-family: 'Consolas', monospace; font-weight: 700; color: #e8f0f8; }
+    #grid tr.alert td   { background: #3a1218; color: #ffb3ba; }
+    #grid tr.alert td.s { color: #ff6c7a; font-weight: 800; }
+    #grid tr.caution td.s { color: #f0b840; font-weight: 700; }
+    #grid tr.clean td.s   { color: #6fdc8c; }
+    #grid tr.unknown td.s { color: #7d93a8; }
+    #gridWrap { height: 176px; overflow: hidden; background: #121c28; }
+
+    /* Status bar */
+    #sbar {
+        display: flex;
+        background: #1b2a3b; border-top: 1px solid #33465e;
+        font-size: 9px; color: #93a6b8;
+    }
+    #sbar div {
+        padding: 3px 8px; border-right: 1px solid #0a141f;
+        display: flex; align-items: center; gap: 4px;
+    }
+    #sbar b { color: #dfe7ee; font-family: 'Consolas', monospace; }
+    #sbar .al b { color: #ff8d97; }
+    #sbar .link { margin-left: auto; border-right: none; }
+    #sbar .dot { width: 7px; height: 7px; background: #67d27e; display: inline-block; }
+</style>
+</head>
+<body>
+<div id="console">
+    <div id="title">
+        <span class="ic"></span>CDE ALPR - Mobile LPR Client
+        <span class="btns"><span>_</span><span>&#9633;</span><span>X</span></span>
+    </div>
+    <div id="menu">
+        <span>File</span><span>Cameras</span><span>Hotlist</span><span>Help</span>
+        <span class="clock" id="clock">--:--:--</span>
+    </div>
+
+    <div id="cams">
+        <div class="camBox">
+            <div class="camHdr"><span>FRONT CAMERA</span><span class="live">&#9679; LIVE</span></div>
+            <div class="camView" id="camFront">
+                <span class="camIdle">NO READ</span>
+                <span class="camTs" id="tsFront"></span>
+            </div>
+        </div>
+        <div class="camBox">
+            <div class="camHdr"><span>REAR CAMERA</span><span class="live">&#9679; LIVE</span></div>
+            <div class="camView" id="camRear">
+                <span class="camIdle">NO READ</span>
+                <span class="camTs" id="tsRear"></span>
+            </div>
+        </div>
+    </div>
+
+    <div id="statusStrip">STANDBY - WAITING FOR READS</div>
+
+    <table id="grid">
+        <thead>
+            <tr>
+                <th style="width:46px">TIME</th>
+                <th style="width:46px">CAM</th>
+                <th>PLATE</th>
+                <th style="width:110px">STATUS</th>
+            </tr>
+        </thead>
+    </table>
+    <div id="gridWrap"><table id="grid" style="border-top:none"><tbody id="rows"></tbody></table></div>
+
+    <div id="sbar">
+        <div>READS <b id="vReads">0</b></div>
+        <div>FLAGGED <b id="vHits">0</b></div>
+        <div class="al">ALERTS <b id="vAlerts">0</b></div>
+        <div class="link"><span class="dot"></span> CAD LINK</div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var MAX_ROWS = 60;
+    var reads = 0, hits = 0, alerts = 0;
+    var elConsole = document.getElementById('console');
+    var rowsEl = document.getElementById('rows');
+    var lastByPlate = {}; // plate -> { row, ts }
+
+    setInterval(function () {
+        var d = new Date();
+        document.getElementById('clock').textContent =
+            ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' + ('0' + d.getSeconds()).slice(-2);
+    }, 1000);
+
+    var audioCtx = null;
+    function beep(freq, ms) {
+        try {
+            audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+            var o = audioCtx.createOscillator(), g = audioCtx.createGain();
+            o.type = 'square'; o.frequency.value = freq; g.gain.value = 0.06;
+            o.connect(g); g.connect(audioCtx.destination);
+            o.start(); setTimeout(function () { o.stop(); }, ms);
+        } catch (e) { /* audio unavailable */ }
+    }
+
+    function statusOf(data) {
+        if (!data.found) return { cls: 'unknown', label: 'NOT ON FILE' };
+        if (data.alertLevel === 'alert') return { cls: 'alert', label: 'ALERT' };
+        if (data.alertLevel === 'caution') return { cls: 'caution', label: 'CAUTION' };
+        return { cls: 'clean', label: 'CLEAN' };
+    }
+
+    function fmtCam(cam) {
+        cam = String(cam || '').toUpperCase();
+        return cam.indexOf('REAR') !== -1 ? 'REAR' : 'FRONT';
+    }
+
+    function setCamView(cam, plate, time) {
+        var view = document.getElementById(cam === 'REAR' ? 'camRear' : 'camFront');
+        var ts = document.getElementById(cam === 'REAR' ? 'tsRear' : 'tsFront');
+        view.innerHTML = '';
+        var p = document.createElement('span');
+        p.className = 'camPlate';
+        p.textContent = plate;
+        view.appendChild(p);
+        ts.textContent = time;
+        view.appendChild(ts);
+    }
+
+    function onScan(msg) {
+        var data = msg.data || {};
+        var st = statusOf(data);
+        var plate = data.plate || '???';
+        var flags = (data.flags || []).join(', ');
+        var cam = fmtCam(msg.cam);
+        var now = new Date();
+        var t = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2) + ':' + ('0' + now.getSeconds()).slice(-2);
+
+        // Re-read of the same plate within 45s refreshes its row instead of stacking duplicates.
+        var prev = lastByPlate[plate];
+        var isRefresh = prev && (Date.now() - prev.ts) < 45000;
+        if (isRefresh && prev.row && prev.row.parentNode) {
+            prev.row.parentNode.removeChild(prev.row);
+        } else {
+            reads++;
+            if (st.cls === 'caution' || st.cls === 'alert') hits++;
+            if (st.cls === 'alert') { alerts++; beep(880, 130); setTimeout(function () { beep(660, 130); }, 160); }
+        }
+        document.getElementById('vReads').textContent = reads;
+        document.getElementById('vHits').textContent = hits;
+        document.getElementById('vAlerts').textContent = alerts;
+
+        setCamView(cam, plate, t + ' ' + cam);
+
+        var strip = document.getElementById('statusStrip');
+        strip.className = st.cls;
+        strip.textContent = st.cls === 'clean'
+            ? plate + ' - CLEAN'
+            : st.cls === 'unknown'
+                ? plate + ' - NOT ON FILE'
+                : plate + ' - ' + st.label + (flags ? ': ' + flags : '');
+
+        var row = document.createElement('tr');
+        row.className = st.cls;
+        row.innerHTML =
+            '<td style="width:46px">' + t.slice(0, 5) + '</td>' +
+            '<td style="width:46px">' + cam + '</td>' +
+            '<td class="p">' + plate + '</td>' +
+            '<td class="s" style="width:110px" title="' + flags.replace(/"/g, '') + '">' + (flags || st.label) + '</td>';
+        rowsEl.insertBefore(row, rowsEl.firstChild);
+        lastByPlate[plate] = { row: row, ts: Date.now() };
+        while (rowsEl.children.length > MAX_ROWS) rowsEl.removeChild(rowsEl.lastChild);
+    }
+
+    window.addEventListener('message', function (e) {
+        var d = e.data || {};
+        if (d.action === 'readerScan') onScan(d);
+        else if (d.action === 'readerShow') elConsole.classList.add('on');
+        else if (d.action === 'readerHide') elConsole.classList.remove('on');
+    });
+})();
+</script>
+</body>
+</html>
