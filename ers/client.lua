@@ -2,14 +2,11 @@ do
     local Config = ErsConfig
     if not Config or not Config.Enabled then return end
 -- client/main.lua
--- ERS Bridge for CDECAD — Client-side
+-- ERS Bridge for CDECAD - Client-side
 -- Provides coordinate/postal data to server-side events when needed.
 
--- Unconditional startup print so we can confirm in F8 whether the cde-ers
--- client script even loaded on this player's session. If this line is
--- missing from a player's F8 console, the resource isn't running for them
--- and dispatch offers (or any of the cde-ers client hooks) can't fire.
-print("[CDE-ERS Client] script loaded (v1.5.x) — dispatch offer handler armed")
+-- Unconditional startup print so the load can be confirmed in F8
+print("[CDE-ERS Client] script loaded (v1.5.x) - dispatch offer handler armed")
 
 local isOnCallout = false
 
@@ -45,8 +42,7 @@ function GetPlayerServiceType()
 end
 
 -- ─── Helper: Get nearest postal code ───────────────────────────────────────
--- Mirrors the auto-detection added to ERS's c_functions.lua: tries the
--- supported postal resources in order and returns the first value found.
+-- Tries the supported postal resources in order and returns the first value.
 -- Supported: rHUD, SimpleHUD, ModernHUD, nearest-postal, mnr-postals.
 local function tryPostalExport(resource, exportName)
     local ok, result = pcall(function()
@@ -125,17 +121,13 @@ end)
 -- ========================================================================
 -- DISPATCH-CREATED ERS CALLOUT HANDLER
 -- ========================================================================
--- Receives notification from the server after a dispatch callout has been
--- added to the night_ers pool via createCallout(). Triggers the native ERS
--- callout offer by executing /requestcallout so the player gets the
--- standard ERS accept/decline UI.
+-- Notification that a dispatch callout was added to the night_ers pool.
 
 RegisterNetEvent('cde-ers:dispatchCallout')
 AddEventHandler('cde-ers:dispatchCallout', function(data)
     if not data then return end
-    -- Informational only — the actual offer UI is shown by ERS via the
-    -- server-side exports['night_ers']:SendCalloutOfferToPlayer call that
-    -- runs in ProcessDispatchCallout. No client work required here.
+    -- Informational only; the offer UI is shown server-side via
+    -- exports['night_ers']:SendCalloutOfferToPlayer.
     print("[CDE-ERS Client] Dispatch callout: " .. tostring(data.callType) ..
         " | ersCalloutId=" .. tostring(data.ersCalloutId) ..
         " | clonedCalloutId=" .. tostring(data.clonedCalloutId))
@@ -144,9 +136,8 @@ end)
 -- ========================================================================
 -- ERS OPEN-SOURCE CALLBACK FUNCTIONS
 -- ========================================================================
--- ERS calls these global functions on the client when events occur.
--- We forward them to the server via TriggerServerEvent so our server
--- handlers can process the data and push it to the CAD API.
+-- ERS calls these global functions on the client; each forwards to the
+-- server, which pushes the data to the CAD API.
 -- Ref: https://docs.nights-software.com/resources/ers/#-open-source-functions--events
 
 -- ─── Callout Lifecycle ───────────────────────────────────────────────────────
@@ -182,9 +173,8 @@ function OnCalloutCompletedSuccesfully(calloutData)
 end
 
 -- ─── NPC & Vehicle Interactions ────────────────────────────────────────────────
--- ERS may fire these as server events directly OR as client callbacks depending
--- on version/context. We define both client functions (forwarding to server)
--- and server handlers to cover all cases.
+-- ERS may fire these as server events directly or as client callbacks
+-- depending on version/context; both paths are handled.
 
 --- Fired on the first interaction with an NPC (during callout, pullover, etc.).
 function OnFirstNPCInteraction(pedData, context)
@@ -218,9 +208,8 @@ end
 -- ─── Shift Toggle ────────────────────────────────────────────────────────────
 
 --- Fired when a player toggles their ERS shift on or off.
--- ERS's documented signature is OnToggleShift(serviceType, isOnShift) but we
--- defensively re-resolve both via the night_ers exports so a signature change
--- (or call site that omits args) doesn't break the duty mirror.
+-- Documented signature is OnToggleShift(serviceType, isOnShift); missing
+-- args are re-resolved via the night_ers exports.
 function OnToggleShift(serviceTypeArg, isOnShiftArg)
     local isOnShift = isOnShiftArg
     if type(isOnShift) ~= "boolean" then
