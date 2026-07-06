@@ -1,14 +1,5 @@
 do
     local Config = CivConfig
---[[
-    CDECAD Civilian Manager - Vehicle Utilities
-    GTA V color index to name mapping and vehicle make/model resolution.
-
-    Standalone: prefers QBCore / QBox shared vehicle data when available, then
-    falls back to GTA natives. Mirrors the helpers in cde-cad-qbcore and
-    cde-cad-qbox-release so registered vehicles show consistent colors and
-    make/model names regardless of which framework is running.
-]]
 
 VehicleUtils = {}
 _G.VehicleUtils = VehicleUtils
