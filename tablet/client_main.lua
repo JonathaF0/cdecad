@@ -49,9 +49,8 @@ local function cleanupProp()
 end
 
 local function closeTablet()
-    -- Always release NUI focus, even if the script's flag thinks the tablet
-    -- is closed. The X-button NUI callback occasionally races with the JS-side
-    -- hide; without this the cursor / keyboard stayed locked until ESC.
+    -- Always release NUI focus even if the tablet is already flagged closed;
+    -- the close callback can race the JS-side hide.
     dbg("closeTablet() called (was open=" .. tostring(tabletOpen) .. ")")
 
     cleanupProp()
@@ -69,7 +68,7 @@ end
 local function openTablet()
     if tabletOpen then return end
     if not isOnDuty() then
-        dbg("Cannot open tablet — not on duty")
+        dbg("Cannot open tablet - not on duty")
         return
     end
 
@@ -99,17 +98,14 @@ local function openTablet()
     Citizen.Wait(200)
     SendNUIMessage({ type = "openTablet", url = Config.TabletURL, dimmer = Config.TabletDimmer })
     SetNuiFocus(true, true)
-    -- Exclusive NUI focus — game sees no keystrokes, so other scripts'
-    -- RegisterKeyMapping handlers don't fire while the player types in
-    -- the tablet. ESC is captured by the JS-side keydown listener in
-    -- html/script.js, so we don't need KeepInput for that anymore.
+    -- Exclusive focus; ESC is captured by the JS keydown listener in html/script.js.
     SetNuiFocusKeepInput(false)
 
     dbg("Tablet opened")
 end
 
 local function toggleTablet()
-    dbg("toggleTablet() — tabletOpen=" .. tostring(tabletOpen))
+    dbg("toggleTablet() - tabletOpen=" .. tostring(tabletOpen))
     if tabletOpen then closeTablet() else openTablet() end
 end
 
@@ -148,7 +144,7 @@ AddEventHandler('cad-tablet:receiveCalls', function(calls)
     })
 end)
 
--- ─── Polling thread — only runs while popup is visible ───────────────────────
+-- ─── Polling thread - only runs while popup is visible ───────────────────────
 local function startPolling()
     Citizen.CreateThread(function()
         while popupVisible do
@@ -205,7 +201,7 @@ RegisterNUICallback('closePopup', function(_, cb)
 end)
 
 -- ─── Commands ────────────────────────────────────────────────────────────────
--- Use the same command names as the old tablet script so existing keybinds work.
+-- 'tablet' and 'cad' both toggle so existing keybinds keep working.
 RegisterCommand('tablet', function()
     dbg("Command 'tablet' fired")
     toggleTablet()
@@ -245,10 +241,7 @@ if Config.EnableCallPopup then
 end
 
 -- ─── Main control thread ─────────────────────────────────────────────────────
--- NUI has exclusive keyboard focus while open (KeepInput is false), so the
--- game receives no controls — DisableAllControlActions is just defense in
--- depth. ESC is handled in JS (html/script.js). The death check stays so
--- the tablet auto-closes if the player dies mid-typing.
+-- ESC is handled in JS (html/script.js); close the tablet if the player dies.
 Citizen.CreateThread(function()
     while true do
         Citizen.Wait(0)
@@ -275,10 +268,8 @@ AddEventHandler('onResourceStop', function(res)
     end
 end)
 
--- ─── Optional: Location Tracking (replaces cde_lm livemap) ──────────────────
--- Only runs when Config.LocationTracking.Enabled = true. Pushes the player's
--- raw GTA coords + status to the CAD's /api/dispatch/location-update endpoint
--- on a timer, gated by their on-duty state. Duty source is configurable.
+-- ─── Optional: Location Tracking ─────────────────────────────────────────────
+-- Pushes on-duty player coords to /api/dispatch/location-update on a timer.
 
 local LEO_JOBS = {
     leo = true, police = true, sheriff = true, trooper = true,
@@ -408,7 +399,7 @@ local function pushLocation(coords, duty)
     trackingState.lastSent = GetGameTimer()
 end
 
--- Server pushes us the latest CAD active-state cache
+-- Latest CAD active-state, pushed from the server
 RegisterNetEvent('cad-tablet:cadActiveResult')
 AddEventHandler('cad-tablet:cadActiveResult', function(data)
     cadActiveCache.active     = data and data.active == true
@@ -420,7 +411,7 @@ AddEventHandler('cad-tablet:cadActiveResult', function(data)
         .. ", dept=" .. tostring(cadActiveCache.department))
 end)
 
--- Push thread — only created when tracking is enabled
+-- Push thread - only created when tracking is enabled
 if Config.LocationTracking and Config.LocationTracking.Enabled then
     Citizen.CreateThread(function()
         -- Wait for resource init / framework load
@@ -444,14 +435,14 @@ if Config.LocationTracking and Config.LocationTracking.Enabled then
                         pushLocation(coords, duty)
                         if not trackingState.isTracking then
                             trackingState.isTracking = true
-                            dbg("Tracking started — dept=" .. tostring(duty.department))
+                            dbg("Tracking started - dept=" .. tostring(duty.department))
                         end
                     end
                 end
             else
                 if trackingState.isTracking then
                     trackingState.isTracking = false
-                    dbg("Tracking stopped — went off duty")
+                    dbg("Tracking stopped - went off duty")
                     if Config.LocationTracking.SendOfflineOnDisconnect then
                         TriggerServerEvent('cad-tablet:sendOffline')
                     end
@@ -477,7 +468,7 @@ end
 Citizen.CreateThread(function()
     SetNuiFocus(false, false)
     Citizen.Wait(500)
-    dbg("Initialized — Tablet key: " .. Config.TabletKey ..
+    dbg("Initialized - Tablet key: " .. Config.TabletKey ..
          ", Popup key: " .. (Config.EnableCallPopup and Config.CallPopupKey or "disabled"))
 end)
 
