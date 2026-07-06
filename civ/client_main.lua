@@ -46,8 +46,7 @@ local function GetCurrentVehicleInfo()
         return nil
     end
 
-    -- Always strip whitespace — the backend normalizes plates the same way so
-    -- the same vehicle can't be registered twice with different spacing.
+    -- Strip whitespace; the backend normalizes plates the same way
     local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     local modelHash = GetEntityModel(vehicle)
     local spawnName = GetDisplayNameFromVehicleModel(modelHash) or ''
@@ -236,10 +235,8 @@ end
 function SelectCivilian(civData)
     Debug('SelectCivilian called with:', json.encode(civData))
 
-    -- Clear old civilian first
     ActiveCivilian = nil
 
-    -- Set new civilian
     ActiveCivilian = civData
 
     -- Save to persistence
@@ -252,7 +249,7 @@ function SelectCivilian(civData)
 
     Notify('success', 'Now playing as: ' .. (civData.firstName or 'Unknown') .. ' ' .. (civData.lastName or 'Unknown'))
 
-    -- Capture and sync FiveM mugshot (disabled by default — CAD photo is source of truth)
+    -- Capture and sync FiveM mugshot (disabled by default - CAD photo is source of truth)
     if Config.CaptureFiveMMugshot then
         local civId = civData.ssn or civData.id or civData._id
         if civId then
@@ -305,8 +302,7 @@ RegisterCommand(Config.Commands.ShowID, function()
         return
     end
 
-    -- The NUI fetches the mugshot on-demand for everyone who views the card,
-    -- so no pre-fetch is needed here.
+    -- Each viewer's NUI fetches the mugshot on demand
     TriggerServerEvent('cdecad-civmanager:showID')
 end, false)
 
@@ -350,8 +346,7 @@ RegisterCommand(Config.Commands.Bank, function()
     })
 end, false)
 
--- /adminbank - Open the admin bank panel (bank employees only).
--- The CAD authorizes the calling player; without proper roles the request is denied.
+-- /adminbank - Open the admin bank panel (CAD authorizes bank employees only)
 RegisterCommand(Config.Commands.AdminBank or 'adminbank', function()
     if not (Config.Bank and Config.Bank.AdminEnabled) then
         Notify('error', 'Admin bank is disabled')
@@ -380,8 +375,7 @@ RegisterCommand(Config.Commands.RegisterVehicle, function()
         return
     end
 
-    -- Guard against the user spamming the command while a prior submission
-    -- is still awaiting a server response.
+    -- Block duplicate submissions while one is pending
     if IsRegisteringVehicle then
         Notify('error', 'Registration already in progress')
         return
@@ -410,11 +404,12 @@ RegisterCommand(Config.Commands.RegisterVehicle, function()
     -- Confirm registration
     local confirm = lib.alertDialog({
         header = 'Register Vehicle',
-        content = string.format('Register this vehicle?\n\n**Plate:** %s\n**Make:** %s\n**Model:** %s\n**Color:** %s',
+        content = string.format('Register this vehicle?\n\n**Plate:** %s\n**Make:** %s\n**Model:** %s\n**Color:** %s\n\n**Fee:** $%d',
             vehicleInfo.plate,
             vehicleInfo.make,
             vehicleInfo.model,
-            vehicleInfo.color
+            vehicleInfo.color,
+            Config.VehicleRegistration.Fee
         ),
         centered = true,
         cancel = true
@@ -479,12 +474,22 @@ RegisterNetEvent('cdecad-civmanager:receiveID', function(civData, fromName, card
     Debug('Received ID from:', fromName)
 
     if Config.IDCard.ShowHTML then
+        -- Render mode defaults to 'html' when LicenseMode is unset.
+        -- The NUI fetches the license image through /fetchLicensePng so the
+        -- x-api-key never reaches the browser.
+        local mode = (Config.IDCard.LicenseMode or 'html'):lower()
+        local civId = civData.id or civData._id or ''
         SendNUIMessage({
-            action   = 'showID',
-            civilian = civData,
-            from     = fromName,
-            duration = Config.IDCard.DisplayDuration,
-            style    = cardStyle or Config.IDCard.CardStyle,
+            action      = 'showID',
+            civilian    = civData,
+            from        = fromName,
+            duration    = Config.IDCard.DisplayDuration,
+            style       = cardStyle or Config.IDCard.CardStyle,
+            -- 'template': image only; 'auto': image with fallback to the
+            -- styled card; 'html': styled card
+            licenseMode = mode,
+            civilianId  = civId,
+            licenseType = 'drivers',
         })
         SetNuiFocus(false, false)
     end
@@ -522,7 +527,6 @@ RegisterNetEvent('cdecad-civmanager:idRequested', function(requesterId, requeste
         return
     end
     
-    -- Show a confirmation dialog
     local confirm = lib.alertDialog({
         header = 'ID Requested',
         content = '**' .. requesterName .. '** is requesting to see your ID.\n\nShow your ID to them?',
