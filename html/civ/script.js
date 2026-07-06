@@ -2,20 +2,24 @@
 
 let hideTimeout = null;
 
-// Listen for messages from the client
 window.addEventListener('message', function(event) {
     const data = event.data;
     
     if (data.action === 'showID') {
-        showIDCard(data.civilian, data.from, data.duration, data.style);
+        // licenseMode = 'template' | 'auto' | 'html'
+        const mode = data.licenseMode || 'html';
+        if ((mode === 'template' || mode === 'auto') && data.civilianId) {
+            showTemplateCard(data.civilianId, data.licenseType || 'drivers',
+                             data.civilian, data.from, data.duration, data.style, mode);
+        } else {
+            showIDCard(data.civilian, data.from, data.duration, data.style);
+        }
     } else if (data.action === 'hideID') {
         hideIDCard();
     }
 });
 
-// Show the ID card
 function showIDCard(civilian, from, duration, style) {
-    // Clear any existing timeout first
     if (hideTimeout) {
         clearTimeout(hideTimeout);
         hideTimeout = null;
@@ -28,7 +32,6 @@ function showIDCard(civilian, from, duration, style) {
     container.style.animation = 'none';
     container.offsetHeight; // Trigger reflow
     
-    // Apply custom styles if provided
     if (style) {
         if (style.BackgroundColor) {
             card.style.background = `linear-gradient(135deg, ${style.BackgroundColor} 0%, ${lightenColor(style.BackgroundColor, 20)} 50%, ${style.BackgroundColor} 100%)`;
@@ -40,12 +43,11 @@ function showIDCard(civilian, from, duration, style) {
             document.querySelector('.card-title').textContent = style.CardTitle;
         }
     } else {
-        // Reset to defaults if no style provided
         document.querySelector('.state-name').textContent = 'SAN ANDREAS';
         document.querySelector('.card-title').textContent = 'DRIVER LICENSE';
     }
     
-    // Clear all fields first to prevent stale data
+    // Clear fields to avoid stale data
     document.getElementById('civ-ssn').textContent = '-';
     document.getElementById('civ-name').textContent = '-';
     document.getElementById('civ-dob').textContent = '-';
@@ -57,7 +59,6 @@ function showIDCard(civilian, from, duration, style) {
     document.getElementById('shown-by').textContent = '';
     document.getElementById('civilian-signature').textContent = '';
     
-    // Now populate with new civilian data
     document.getElementById('civ-ssn').textContent = civilian.ssn || civilian.citizenid || 'N/A';
     document.getElementById('civ-name').textContent = `${civilian.lastName || ''}, ${civilian.firstName || ''}`.toUpperCase();
     document.getElementById('civ-dob').textContent = formatDate(civilian.dob || civilian.dateOfBirth);
@@ -68,7 +69,6 @@ function showIDCard(civilian, from, duration, style) {
     document.getElementById('civ-address').textContent = civilian.address || 'Los Santos, SA';
     document.getElementById('shown-by').textContent = `Shown by: ${from}`;
     
-    // Set signature
     document.getElementById('civilian-signature').textContent = `${civilian.firstName || ''} ${civilian.lastName || ''}`;
     
     var photoContainer = document.getElementById('civilian-photo');
@@ -78,11 +78,10 @@ function showIDCard(civilian, from, duration, style) {
     var ssn = civilian.ssn || civilian.citizenid;
 
     if (mugshotUrl && mugshotUrl.startsWith('data:')) {
-        // Self-contained data URI — display directly, no network needed
+        // Self-contained data URI - display directly, no network needed
         renderMugshot(photoContainer, mugshotUrl);
     } else if (ssn) {
-        // Fetch the mugshot via the resource's server (which holds the CAD
-        // API key). The browser never sees the key.
+        // Fetch via the resource server, which holds the CAD API key
         photoContainer.innerHTML = '<span class="no-photo" style="font-size:9px;color:#6b7280">LOADING...</span>';
         fetch('https://' + GetParentResourceName() + '/getMugshot', {
             method: 'POST',
@@ -104,17 +103,15 @@ function showIDCard(civilian, from, duration, style) {
             if (el) el.innerHTML = '<span class="no-photo">NO PHOTO</span>';
         });
     } else if (mugshotUrl) {
-        // HTTP URL with no API config — try direct (may fail due to CORS/expiry)
+        // HTTP URL with no API config - try direct (may fail due to CORS/expiry)
         renderMugshot(photoContainer, mugshotUrl);
     } else {
         photoContainer.innerHTML = '<span class="no-photo">NO PHOTO</span>';
     }
     
-    // Show the card
     container.classList.remove('hidden');
     container.style.animation = 'fadeIn 0.3s ease-out';
     
-    // Auto-hide after duration
     hideTimeout = setTimeout(function() {
         hideIDCard();
     }, duration || 10000);
@@ -122,7 +119,75 @@ function showIDCard(civilian, from, duration, style) {
     console.log('[CDECAD-CIVMANAGER] Showing ID for:', civilian.firstName, civilian.lastName);
 }
 
-// Hide the ID card
+// Templated ID card: a PNG rendered server-side from the community's license
+// template, fetched through the /fetchLicensePng proxy.
+// mode='auto' falls back to the HTML card on miss.
+function showTemplateCard(civilianId, licenseType, civilian, from, duration, style, mode) {
+    if (hideTimeout) {
+        clearTimeout(hideTimeout);
+        hideTimeout = null;
+    }
+    const container = document.getElementById('id-card-container');
+    if (!container) return;
+
+    const card = document.getElementById('id-card');
+    if (card) card.style.display = 'none';
+
+    let imgWrap = document.getElementById('id-card-template-wrap');
+    if (!imgWrap) {
+        imgWrap = document.createElement('div');
+        imgWrap.id = 'id-card-template-wrap';
+        imgWrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:8px;';
+        container.appendChild(imgWrap);
+    }
+    imgWrap.style.display = '';
+    imgWrap.innerHTML = '<div style="color:#cbd5e1;font-family:sans-serif;font-size:13px;">Loading license…</div>';
+
+    function fallback() {
+        imgWrap.style.display = 'none';
+        if (card) card.style.display = '';
+        showIDCard(civilian, from, duration, style);
+    }
+
+    function failHard(msg) {
+        imgWrap.innerHTML = '<div style="color:#fff;background:#1f2937;padding:14px 18px;border-radius:8px;font-family:sans-serif;font-size:13px;">' + (msg || 'License template unavailable.') + '</div>';
+        container.classList.remove('hidden');
+        container.style.animation = 'fadeIn 0.3s ease-out';
+        hideTimeout = setTimeout(function() { hideIDCard(); }, duration || 10000);
+    }
+
+    fetch('https://' + GetParentResourceName() + '/fetchLicensePng', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ civilianId: civilianId, licenseType: licenseType }),
+    })
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(payload) {
+        if (!payload || !payload.ok || !payload.dataUri) {
+            return mode === 'auto' ? fallback() : failHard();
+        }
+        imgWrap.innerHTML = '';
+        const img = document.createElement('img');
+        img.alt = 'License';
+        img.style.cssText = 'max-width:520px;width:100%;border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,0.4);';
+        img.onerror = function() { return mode === 'auto' ? fallback() : failHard(); };
+        img.src = payload.dataUri;
+        imgWrap.appendChild(img);
+
+        const credit = document.createElement('div');
+        credit.style.cssText = 'color:#cbd5e1;font-family:sans-serif;font-size:12px;text-shadow:0 1px 2px rgba(0,0,0,0.6);';
+        credit.textContent = 'Shown by: ' + (from || '');
+        imgWrap.appendChild(credit);
+
+        container.classList.remove('hidden');
+        container.style.animation = 'fadeIn 0.3s ease-out';
+        hideTimeout = setTimeout(function() { hideIDCard(); }, duration || 10000);
+    })
+    .catch(function() {
+        return mode === 'auto' ? fallback() : failHard();
+    });
+}
+
 function hideIDCard() {
     const container = document.getElementById('id-card-container');
     container.style.animation = 'fadeOut 0.3s ease-out';
@@ -145,7 +210,7 @@ function renderMugshot(container, value) {
     const img = document.createElement('img');
     img.alt = 'Photo';
     img.onerror = function() {
-        // Guard: img may have been removed from DOM if showIDCard was called twice rapidly
+        // img may be detached if showIDCard was called twice rapidly
         var parent = this.parentElement;
         if (parent) parent.innerHTML = '<span class="no-photo">NO PHOTO</span>';
     };
@@ -154,21 +219,18 @@ function renderMugshot(container, value) {
 }
 
 // Normalise a mugshot value to a usable <img src> string.
-// MugShotBase64 returns raw base64 data with no prefix.
-// JPEG base64 starts with "/9j/" — PNG starts with "iVBOR".
-// Using the wrong MIME type makes the browser reject the image and fires onerror.
+// MugShotBase64 returns raw base64 with no prefix; detect JPEG ("/9j")
+// vs PNG from the header bytes since the wrong MIME type fires onerror.
 function normaliseMugshotSrc(value) {
     if (!value) return '';
-    // Already a valid data URI or a remote URL — use as-is
+    // Data URI or remote URL - use as-is
     if (value.startsWith('data:') || value.startsWith('http://') || value.startsWith('https://')) {
         return value;
     }
-    // Detect format from base64 header bytes
     const mime = value.startsWith('/9j') ? 'image/jpeg' : 'image/png';
     return `data:${mime};base64,` + value;
 }
 
-// Format date for display
 function formatDate(dateStr) {
     if (!dateStr) return 'N/A';
     
@@ -183,7 +245,6 @@ function formatDate(dateStr) {
     }
 }
 
-// Format gender for display
 function formatGender(gender) {
     if (!gender) return 'U';
     
@@ -193,24 +254,19 @@ function formatGender(gender) {
     return 'X';
 }
 
-// Lighten a hex color
 function lightenColor(color, percent) {
     if (!color) return '#2c5282';
     
-    // Remove # if present
     color = color.replace('#', '');
     
-    // Parse RGB
     let r = parseInt(color.substring(0, 2), 16);
     let g = parseInt(color.substring(2, 4), 16);
     let b = parseInt(color.substring(4, 6), 16);
     
-    // Lighten
     r = Math.min(255, Math.floor(r + (255 - r) * (percent / 100)));
     g = Math.min(255, Math.floor(g + (255 - g) * (percent / 100)));
     b = Math.min(255, Math.floor(b + (255 - b) * (percent / 100)));
     
-    // Convert back to hex
     return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
 
@@ -237,15 +293,12 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BANK PANEL
-// ─────────────────────────────────────────────────────────────────────────────
+// Bank panel
 
 let bankCivilianId  = null;
 let bankCommunityId = null;
 let bankPlayerCash  = null; // available in-game cash; null = unknown
 
-// NUI message handler picks up openBank action
 window.addEventListener('message', function(event) {
     const data = event.data;
     if (data.action === 'openBank') {
@@ -255,11 +308,8 @@ window.addEventListener('message', function(event) {
     }
 });
 
-// =========================================================================
-// ADMIN BANK PANEL — bank-employee view (lists every community account,
-// allows quick search + summary). Heavier admin actions live in the CAD
-// "Banking" admin page.
-// =========================================================================
+// Bank-employee view: lists every community account with search + summary.
+// Heavier admin actions live in the CAD "Banking" admin page.
 function openAdminBank(accounts, settings, communityId) {
     let panel = document.getElementById('admin-bank-panel');
     if (!panel) {
@@ -301,7 +351,7 @@ function openAdminBank(accounts, settings, communityId) {
     renderAdminAccounts(accounts, '');
 }
 
-// Selected account in the admin panel — rebuilt every time the list re-renders
+// Selected account in the admin panel - rebuilt every time the list re-renders
 let adminSelectedAccountId = null;
 
 function renderAdminAccounts(accounts, query) {
@@ -324,13 +374,13 @@ function renderAdminAccounts(accounts, query) {
         const civ = a.civilian || {};
         return '<div class="ab-row" data-account-id="' + esc(a._id) + '" role="button" tabindex="0">' +
             '  <div class="ab-row-name">' + esc((civ.firstName || '') + ' ' + (civ.lastName || '')) + '</div>' +
-            '  <div class="ab-row-meta">' + esc(a.accountNumber || '—') + (civ.ssn ? ' &middot; SSN ' + esc(civ.ssn) : '') + '</div>' +
+            '  <div class="ab-row-meta">' + esc(a.accountNumber || '-') + (civ.ssn ? ' &middot; SSN ' + esc(civ.ssn) : '') + '</div>' +
             '  <div class="ab-row-balance">$' + Number(a.balance || 0).toLocaleString() + '</div>' +
             (a.pendingLoans ? '<div class="ab-row-pill">Pending loans: ' + a.pendingLoans + '</div>' : '') +
             '</div>';
     }).join('');
 
-    // Wire row clicks to open the per-account banker view ("act as civ")
+    // Row click opens the per-account banker view
     list.querySelectorAll('.ab-row').forEach(function(row) {
         row.addEventListener('click', function() {
             adminSelectedAccountId = row.getAttribute('data-account-id');
@@ -339,8 +389,7 @@ function renderAdminAccounts(accounts, query) {
     });
 }
 
-// Open a per-account banker view. Calls openBankerAccount via NUI which proxies
-// to /banking/fivem/admin-account; renders details + write actions.
+// Per-account banker view; loads details via the /banking/fivem/admin-account proxy.
 function openBankerAccount(accountId) {
     let panel = document.getElementById('banker-account-panel');
     if (!panel) {
@@ -373,7 +422,7 @@ function openBankerAccount(accountId) {
 
 function renderBankerAccount(a) {
     const civ = a.civilian || {};
-    const title = (civ.firstName || '') + ' ' + (civ.lastName || '') + ' — ' + (a.accountNumber || '');
+    const title = (civ.firstName || '') + ' ' + (civ.lastName || '') + ' - ' + (a.accountNumber || '');
     document.getElementById('banker-acct-title').textContent = title.trim() || 'Account';
 
     const pending = (a.loans || []).filter(function(l) { return l.status === 'pending'; });
@@ -383,7 +432,7 @@ function renderBankerAccount(a) {
         '<h3>Pending Loan Approvals</h3>' +
         '<div class="banker-list">' + pending.map(function(l) {
             return '<div class="banker-row">' +
-                '<div><strong>' + esc(l.productName) + '</strong> — $' + Number(l.principal).toLocaleString() +
+                '<div><strong>' + esc(l.productName) + '</strong> - $' + Number(l.principal).toLocaleString() +
                 ' @ ' + (l.apr * 100).toFixed(2) + '% / ' + l.termMonths + 'mo</div>' +
                 '<div class="banker-row-actions">' +
                 '  <button class="btn btn-primary btn-green" data-action="approve" data-loan-id="' + esc(l._id) + '">Approve</button>' +
@@ -396,8 +445,8 @@ function renderBankerAccount(a) {
         (active.length === 0 ? '<div class="tx-empty">None</div>' :
             '<div class="banker-list">' + active.map(function(l) {
                 return '<div class="banker-row"><div>' + esc(l.productName) +
-                    ' — bal $' + Number(l.balance).toLocaleString() +
-                    ' &middot; next due ' + (l.nextPaymentDue ? new Date(l.nextPaymentDue).toLocaleDateString() : '—') +
+                    ' - bal $' + Number(l.balance).toLocaleString() +
+                    ' &middot; next due ' + (l.nextPaymentDue ? new Date(l.nextPaymentDue).toLocaleDateString() : '-') +
                     '</div></div>';
             }).join('') + '</div>');
 
@@ -495,7 +544,7 @@ function openBank(account, civilian, communityId, playerCash) {
     if (cashEl) {
         cashEl.textContent = bankPlayerCash !== null
             ? '$' + bankPlayerCash.toLocaleString('en-US', { minimumFractionDigits: 2 })
-            : '—';
+            : '-';
     }
 
     updateBalance(account.balance || 0);
@@ -596,7 +645,7 @@ document.getElementById('btn-refresh').addEventListener('click', async function(
     if (!bankCivilianId) return;
     this.style.opacity = '0.4';
     const res = await nuiFetch('bankDeposit', { civilianId: bankCivilianId, amount: 0, description: '' });
-    // We re-open with updated data — just reload via callback
+    // Zero-amount deposit re-opens the panel with fresh data via the callback
     this.style.opacity = '1';
 });
 
@@ -608,7 +657,7 @@ document.getElementById('btn-deposit').addEventListener('click', async function(
     if (!amount || amount <= 0) { showMsg('deposit-msg', 'error', 'Enter a valid amount'); return; }
     if (!desc)                  { showMsg('deposit-msg', 'error', 'Enter a description');  return; }
 
-    // Client-side cash guard — server also validates this independently
+    // Client-side cash guard - server also validates this independently
     if (bankPlayerCash !== null && amount > bankPlayerCash) {
         showMsg('deposit-msg', 'error',
             'Insufficient cash. You have $' +
