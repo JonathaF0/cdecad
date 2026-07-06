@@ -13,22 +13,28 @@
 
     var tabletURL = '';
     var dimmerEnabled = false;
+
+    // GetParentResourceName is injected by FiveM's NUI runtime.
     var RESOURCE = (typeof GetParentResourceName === 'function')
         ? GetParentResourceName()
         : 'cad-tablet';
 
     function nuiPost(action) {
+        // Omit Content-Type; some FXServer versions reject it with an empty body.
         return fetch('https://' + RESOURCE + '/' + action, {
             method: 'POST',
             body: '{}'
         }).catch(function () {});
     }
+
+    // Cache-bust the iframe URL so CEF never serves a stale index.html.
     function bust(url) {
         if (!url) return url;
         return url + (url.indexOf('?') === -1 ? '?' : '&') + '_cb=' + Date.now();
     }
 
     function openTablet(url, dimmer) {
+        // Reload only on first open or URL change; tabletURL holds the base URL.
         if (tabletURL !== url) {
             tabletURL = url;
             tabletFrame.src = bust(url);
@@ -45,7 +51,7 @@
 
     $('#closeTablet').addEventListener('click', closeTablet);
 
-    // ESC key closes tablet (capture phase — works when main document has focus)
+    // ESC key closes tablet (capture phase - works when main document has focus)
     window.addEventListener('keydown', function (e) {
         if (e.key === 'Escape' && !tablet.classList.contains('hidden')) {
             e.preventDefault();
@@ -113,7 +119,6 @@
         return d.innerHTML;
     }
 
-    // Nav buttons
     $('#prevCall').addEventListener('click', function () { nuiPost('prevCall'); });
     $('#nextCall').addEventListener('click', function () { nuiPost('nextCall'); });
 
@@ -159,7 +164,6 @@
                     callContent.innerHTML = '<div class="no-calls">No active calls</div>';
                 }
 
-                // Show/hide nav when multiple calls
                 if (total > 1) {
                     callNav.classList.remove('hidden');
                 } else {
