@@ -326,11 +326,8 @@ RegisterNetEvent('cdecad-civmanager:selectCivilian', function(civilianData)
         return
     end
 
-    -- Shape check. Note this does NOT verify the civilian belongs to the
-    -- caller — the client could still submit any civilian record they
-    -- like. Until the flow is restructured to send an ssn only and have
-    -- the server re-fetch the record, treat ActiveCivilians as untrusted
-    -- and re-validate before granting any privileges.
+    -- Shape check only; ownership is not verified, so treat ActiveCivilians
+    -- as untrusted and re-validate before granting privileges.
     if type(civilianData) ~= 'table' then return end
     local maxKeys = 0
     for _ in pairs(civilianData) do maxKeys = maxKeys + 1 end
@@ -347,8 +344,7 @@ RegisterNetEvent('cdecad-civmanager:selectCivilian', function(civilianData)
             stored.mugshotUrl = nil
         end
     end
-    -- If the civilian has no SSN in the DB, fall back to the MongoDB id so the
-    -- identifier is preserved across the network (avoids "SSN: Unknown" in chat).
+    -- Fall back to the Mongo id when the civilian has no SSN
     if not stored.ssn and (stored.id or stored._id) then
         stored.ssn = tostring(stored.id or stored._id)
     end
@@ -361,7 +357,7 @@ RegisterNetEvent('cdecad-civmanager:selectCivilian', function(civilianData)
     -- Save to persistence
     SaveSelectedCivilian(source, stored.ssn or stored.id)
 
-    -- Confirm back to client (client already shows its own notification)
+    -- Confirm back to client
     TriggerClientEvent('cdecad-civmanager:civilianSet', source, stored)
 end)
 
@@ -381,10 +377,8 @@ RegisterNetEvent('cdecad-civmanager:showID', function()
 
     Debug('ShowID triggered for source:', source, 'Civilian:', activeCiv.firstName, activeCiv.lastName)
 
-    -- Send activeCiv WITHOUT mugshot — the net event must stay small to avoid
-    -- FiveM's ~64 KB event limit. Each client's NUI fetches the photo directly
-    -- from the CAD API via PerformHttpRequest (see client/nui.lua getMugshot).
-    -- Get player position
+    -- Sent without the mugshot to stay under FiveM's ~64 KB event limit;
+    -- each viewer's NUI fetches the photo separately.
     local playerPed = GetPlayerPed(source)
     local playerCoords = GetEntityCoords(playerPed)
 
@@ -485,8 +479,13 @@ RegisterNetEvent('cdecad-civmanager:updateMugshot', function(civilianId, mugshot
     if type(mugshotBase64) ~= 'string' or #mugshotBase64 > 5 * 1024 * 1024 then return end
     if not mugshotBase64:match('^data:image/') then return end
 
+    -- civilianId may be the active civ's SSN or its Mongo _id/id
     local active = ActiveCivilians[source]
-    if not active or tostring(active._id or active.id) ~= civilianId then
+    local matches = active and (
+        tostring(active._id or active.id) == civilianId
+        or tostring(active.ssn or '') == civilianId
+    )
+    if not matches then
         Debug('updateMugshot rejected: civilianId does not match caller\'s active civ', source, civilianId)
         return
     end
@@ -557,8 +556,7 @@ local function RemovePlayerCash(source, amount)
     return false
 end
 
--- Fetch just the mugshotUrl for a civilian by SSN.
--- Kept as a NUI callback fallback in case the server embed is unavailable.
+-- Fetch just the mugshotUrl for a civilian by SSN (NUI fallback)
 lib.callback.register('cdecad-civmanager:getMugshot', function(source, ssn)
     local result = nil
     local completed = false
@@ -572,6 +570,45 @@ lib.callback.register('cdecad-civmanager:getMugshot', function(source, ssn)
         end)
 
     while not completed do Wait(10) end
+    return result
+end)
+
+-- Fetch a server-rendered license PNG. The CAD endpoint returns JSON
+-- `{ ok, dataUri }` with the PNG already base64-encoded, so this proxy
+-- never handles raw binary; the JSON is forwarded to the NUI as-is.
+lib.callback.register('cdecad-civmanager:fetchLicensePng', function(source, civilianId, licenseType)
+    if not civilianId or civilianId == '' or not licenseType or licenseType == '' then
+        return { ok = false, status = 400 }
+    end
+    local result = nil
+    local completed = false
+    local url = Config.API_URL
+        .. '/fivem/license-templates/render/' .. tostring(civilianId)
+        .. '/' .. tostring(licenseType)
+
+    PerformHttpRequest(url, function(statusCode, body, headers)
+        if statusCode >= 200 and statusCode < 300 and body and body ~= '' then
+            local ok, decoded = pcall(json.decode, body)
+            if ok and decoded and decoded.ok and decoded.dataUri then
+                result = { ok = true, dataUri = decoded.dataUri }
+            else
+                result = { ok = false, status = 500, error = 'bad response' }
+            end
+        else
+            result = { ok = false, status = statusCode }
+        end
+        completed = true
+    end, 'GET', '', {
+        ['x-api-key'] = Config.API_KEY,
+        ['Accept']    = 'application/json',
+    })
+
+    -- Bounded wait so a stalled HTTP response doesn't pin the thread
+    local waited = 0
+    while not completed and waited < 10000 do
+        Wait(50); waited = waited + 50
+    end
+    if not completed then return { ok = false, status = 504 } end
     return result
 end)
 
@@ -655,8 +692,8 @@ lib.callback.register('cdecad-civmanager:bankWithdraw', function(source, civilia
     return result
 end)
 
--- Helper: synchronous JSON POST with bank-employee discord identity injected.
--- Used by every banker-write endpoint so they all share the same auth flow.
+-- Synchronous JSON POST with the caller's Discord ID injected; shared by
+-- all banker-write endpoints.
 local function bankerPost(source, endpoint, payload)
     local discordId = GetDiscordId(source)
     if not discordId then
@@ -681,33 +718,31 @@ local function bankerPost(source, endpoint, payload)
     return result
 end
 
--- Admin bank — bank-employee access. Validates via the CAD by sending the
--- player's Discord ID; the CAD checks role membership against the community's
--- bankEmployeeRoleNames configuration and returns aggregate banking data.
+-- Admin bank access; the CAD checks bank-employee roles by Discord ID
 lib.callback.register('cdecad-civmanager:adminBankAccess', function(source)
     return bankerPost(source, '/banking/fivem/admin-access', {})
 end)
 
--- Banker — load a single account
+-- Banker - load a single account
 lib.callback.register('cdecad-civmanager:bankerLoadAccount', function(source, accountId)
     return bankerPost(source, '/banking/fivem/admin-account', { accountId = accountId })
 end)
 
--- Banker — approve / deny a pending loan
+-- Banker - approve / deny a pending loan
 lib.callback.register('cdecad-civmanager:bankerLoanDecision', function(source, accountId, loanId, decision, reason)
     return bankerPost(source, '/banking/fivem/admin-loan-decision', {
         accountId = accountId, loanId = loanId, decision = decision, reason = reason
     })
 end)
 
--- Banker — freeze / unfreeze / close
+-- Banker - freeze / unfreeze / close
 lib.callback.register('cdecad-civmanager:bankerSetStatus', function(source, accountId, status)
     return bankerPost(source, '/banking/fivem/admin-freeze', {
         accountId = accountId, status = status
     })
 end)
 
--- Banker — deposit / withdraw / transfer on behalf of a customer
+-- Banker - deposit / withdraw / transfer on behalf of a customer
 lib.callback.register('cdecad-civmanager:bankerAdjust', function(source, accountId, action, amount, description, recipientAccountNumber)
     return bankerPost(source, '/banking/fivem/admin-adjust', {
         accountId = accountId,
