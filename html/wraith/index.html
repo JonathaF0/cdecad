@@ -11,6 +11,10 @@
             box-sizing: border-box;
         }
 
+        html, body {
+            pointer-events: none;
+        }
+
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: transparent;
@@ -19,6 +23,7 @@
 
         #plate-result {
             display: none;
+            pointer-events: none;
             position: fixed;
             top: 20px;
             right: 20px;
@@ -309,7 +314,7 @@
         const container = document.getElementById('plate-result');
 
         document.getElementById('pr-close').addEventListener('click', function() {
-            fetch('https://' + (typeof GetParentResourceName === 'function' ? GetParentResourceName() : 'cde-wraith') + '/closePlateResult', { method: 'POST', body: JSON.stringify({}) });
+            fetch('https://cde-wraith/closePlateResult', { method: 'POST', body: JSON.stringify({}) });
         });
 
         window.addEventListener('message', function(event) {
@@ -338,7 +343,11 @@
             const alertBar = document.getElementById('pr-alert-bar');
             alertBar.className = 'pr-alert-bar';
 
-            if (data.alertLevel === 'alert') {
+            if (data.found === false) {
+                // No CAD record (AI traffic / unregistered plate)
+                alertBar.classList.add('pr-alert-caution');
+                alertBar.textContent = 'NOT ON FILE';
+            } else if (data.alertLevel === 'alert') {
                 alertBar.classList.add('pr-alert-alert');
                 alertBar.textContent = 'HIGH ALERT';
             } else if (data.alertLevel === 'caution') {
@@ -364,13 +373,16 @@
                 flagsEl.style.display = 'none';
             }
 
-            // Cached scan hits have no vehicle/owner payload — hide both
-            // sections and surface a hint that locking will pull the full record.
+            // Cached scan hits carry no vehicle/owner payload; locking pulls the full record.
             const vehSection = document.getElementById('pr-vehicle-section');
             const ownerSection = document.getElementById('pr-owner-section');
 
             const footerEl = document.getElementById('pr-footer');
-            if (data.cached) {
+            if (data.found === false) {
+                vehSection.style.display = 'none';
+                ownerSection.style.display = 'none';
+                footerEl.innerHTML = 'CDECAD &bull; No registration on file for this plate';
+            } else if (data.cached) {
                 vehSection.style.display = 'none';
                 ownerSection.style.display = 'none';
                 footerEl.innerHTML = 'CDECAD &bull; Scan hit &bull; Lock plate for full details';
@@ -429,7 +441,6 @@
                 boloSection.style.display = 'none';
             }
 
-            // Show the container
             container.classList.remove('plate-result-hiding');
             container.style.display = 'block';
         }
