@@ -7,7 +7,7 @@ do
         print('^1[CDECAD/TABLET] CDE_CAD_API_KEY / CDE_CAD_API_URL convar not set.^0')
     end
 -- server/main.lua
--- CAD Tablet Server — Fetches assigned calls from CAD API for the popup
+-- CAD Tablet Server - Fetches assigned calls from CAD API for the popup
 -- and (optionally) pushes player locations for the CAD livemap.
 
 local function debugLog(msg)
@@ -69,8 +69,7 @@ AddEventHandler('cad-tablet:requestCalls', function()
 end)
 
 -- ─── Optional: Location Tracking ─────────────────────────────────────────────
--- Mirrors what cde_lm does. Pushes the player's coords + status to the CAD
--- livemap. Only used when Config.LocationTracking.Enabled = true.
+-- Pushes player coords + status to the CAD livemap when LocationTracking.Enabled.
 
 local function postJSON(url, payload, onDone)
     PerformHttpRequest(url, function(statusCode, body, headers)
@@ -81,7 +80,7 @@ local function postJSON(url, payload, onDone)
     })
 end
 
--- Client asks "am I active in the CAD?" — relay to backend, push result back.
+-- Relay a client's CAD active-state check to the backend and return the result.
 RegisterNetEvent('cad-tablet:checkCADActive')
 AddEventHandler('cad-tablet:checkCADActive', function()
     local src = source
@@ -109,8 +108,8 @@ AddEventHandler('cad-tablet:checkCADActive', function()
         })
 end)
 
--- Client pushes raw GTA coords; we forward to /api/dispatch/location-update
--- with the community API key. Backend resolves the community from the key.
+-- Forward client coords to /api/dispatch/location-update; the backend
+-- resolves the community from the API key.
 RegisterNetEvent('cad-tablet:pushLocation')
 AddEventHandler('cad-tablet:pushLocation', function(payload)
     local src = source
@@ -170,7 +169,7 @@ AddEventHandler('onResourceStart', function(res)
     if GetCurrentResourceName() ~= res then return end
     print("^2[CAD-TABLET] Server initialized^0")
     if Config.LocationTracking and Config.LocationTracking.Enabled then
-        print("^2[CAD-TABLET] Location tracking ENABLED — DutySource=" ..
+        print("^2[CAD-TABLET] Location tracking ENABLED - DutySource=" ..
               tostring(Config.LocationTracking.DutySource) ..
               ", Interval=" .. tostring(Config.LocationTracking.Interval) .. "ms^0")
     end
