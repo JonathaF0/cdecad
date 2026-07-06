@@ -18,7 +18,7 @@ Config.TabletKey         = "LBRACKET"
 Config.TabletDescription = "Open/Close CAD Tablet"
 
 -- Fade the tablet to 15% opacity when the cursor leaves it
-Config.TabletDimmer = false
+Config.TabletDimmer = true
 
 -- Block the NUI from auto-redirecting to /home after login
 Config.PreventAutoRedirect = true
@@ -57,7 +57,7 @@ Config.RequireOnDuty = false
 -- Pushes player GPS locations to the CAD livemap on a timer.
 -- Leave disabled if cde_lm is running (duplicate updates).
 Config.LocationTracking = {
-    Enabled         = false,         -- Master switch (off by default)
+    Enabled         = true,         -- Master switch (off by default)
 
     -- Duty status source: 'auto' (CDE_Duty > ESX > QBCore > CAD), 'cde_duty',
     -- 'esx', 'qbcore', or 'cad' (polls /api/fivem/unit-active, no duty script needed)
@@ -65,7 +65,7 @@ Config.LocationTracking = {
 
     Interval        = 10000,         -- ms between location pushes
     MinDistance     = 50.0,          -- GTA units; skip update if moved less
-    LEOOnly         = false,         -- only track LEO (police/sheriff) depts
+    LEOOnly         = true,         -- only track LEO (police/sheriff) depts
 
     -- For DutySource = 'cad': ms between active-unit checks against the CAD
     CADActiveCheckInterval = 30000,
@@ -98,13 +98,13 @@ Config.Command = "d"
 Config.AlternativeCommand = "duty"
 
 -- Show blips for on-duty players
-Config.ShowDutyBlips = true
+Config.ShowDutyBlips = false
 
 -- Enable 911 chat integration
 Config.Enable911Chat = true
 
 -- Enable paycheck system
-Config.EnablePaychecks = true
+Config.EnablePaychecks = false
 
 -- ========================================
 -- DEPARTMENT CONFIGURATIONS
@@ -413,7 +413,7 @@ Config.Advanced = {
 -- ========================================
 
 Config.Discord = {
-    Enabled = true, -- Set to true if you want Discord logs
+    Enabled = false, -- Set to true if you want Discord logs
 
 
     -- Time tracking settings
@@ -530,7 +530,7 @@ Config.IDCard = {
 
     -- Card renderer: 'template' (community-uploaded license template PNG),
     -- 'html' (classic card, uses CardStyle below), 'auto' (template, fallback to html)
-    LicenseMode = 'auto',
+    LicenseMode = 'template',
 
     -- Also output to chat/skybox
     ShowInChat = true,
@@ -635,7 +635,7 @@ Config.Notifications = {
 
 -- Capture an in-game mugshot on civilian select and upload it to the CAD
 -- as a fallback photo (never overwrites a photo uploaded via the CAD)
-Config.CaptureFiveMMugshot = false
+Config.CaptureFiveMMugshot = true
 
 -- =============================================================================
 -- DEBUG
@@ -748,7 +748,7 @@ Config.ALPR = {
     AlertFlags    = {},
 
     -- Speed-limit choices offered by the /alpr panel picker
-    SpeedOptions = { 25, 35, 45, 55, 65, 70, 80 },
+    SpeedOptions = { 25, 35, 45, 55, 65, 70, 80, 90, 100 },
 
     -- LEO alert on a camera hit: chat line, flashing map blip, sound
     Alerts = {
@@ -858,7 +858,7 @@ do
     }
 
     Config.Permissions = {
-        RestrictToJobs = true,
+        RestrictToJobs = false,
         AllowedJobs = { 'police','sheriff','statepolice','trooper','highway','ranger','marshal' },
         UseQBCore = false,
         UseESX    = false,
