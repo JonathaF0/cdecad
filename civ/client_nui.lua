@@ -17,6 +17,16 @@ RegisterNUICallback('getMugshot', function(data, cb)
     cb({ mugshotUrl = result and result.mugshotUrl or nil })
 end)
 
+-- Proxy for the server-rendered license PNG; the server-side callback
+-- fetches it with the API key and returns a base64 data URI.
+RegisterNUICallback('fetchLicensePng', function(data, cb)
+    local civilianId  = data and data.civilianId
+    local licenseType = (data and data.licenseType) or 'drivers'
+    if not civilianId or civilianId == '' then cb({ ok = false }) return end
+    local result = lib.callback.await('cdecad-civmanager:fetchLicensePng', false, civilianId, licenseType)
+    cb(result or { ok = false })
+end)
+
 -- Handle escape key
 RegisterNUICallback('escape', function(data, cb)
     SetNuiFocus(false, false)
@@ -78,7 +88,7 @@ RegisterNUICallback('bankerSetStatus', function(data, cb)
     cb(result)
 end)
 
--- Teller adjust — deposit/withdraw/transfer on behalf of a customer
+-- Teller adjust - deposit/withdraw/transfer on behalf of a customer
 RegisterNUICallback('bankerAdjust', function(data, cb)
     local result = lib.callback.await('cdecad-civmanager:bankerAdjust', false,
         data.accountId, data.action, tonumber(data.amount), data.description, data.recipientAccountNumber)
