@@ -5,7 +5,7 @@ do
     Config.CADEndpoint = GetConvar('CDE_CAD_API_URL', '')
     Config.APIKey      = GetConvar('CDE_CAD_API_KEY', '')
 -- server/main.lua
--- ERS Bridge for CDECAD — Server-side
+-- ERS Bridge for CDECAD - Server-side
 -- Hooks into night_ers server events and pushes data to the CAD backend API.
 
 local activeCallouts = {} -- Track active ERS callouts per player source
@@ -50,9 +50,8 @@ local function base64encode(data)
 end
 
 -- ─── Helper: HTTP POST to CAD API ──────────────────────────────────────────
--- Sends the payload in both the body AND the x-payload header (base64).
--- This ensures delivery even when Cloudflare strips POST bodies from
--- non-browser user agents (FiveM's PerformHttpRequest).
+-- Payload goes in both the body and the x-payload header (base64), since
+-- Cloudflare can strip POST bodies from non-browser user agents.
 local function PostToCAD(path, data, callback)
     local url = GetApiUrl(path)
     local jsonData = json.encode(data)
@@ -123,7 +122,6 @@ end
 local function GetPlayerDiscordId(source)
     local id = GetPlayerIdentifierByType(source, 'discord')
     if id then
-        -- Strip "discord:" prefix → return just the numeric ID
         return id:gsub("discord:", "")
     end
     return nil
@@ -168,9 +166,9 @@ local function GetPriority(calloutData)
 end
 
 -- ─── License status normalization ──────────────────────────────────────────
--- The new ERS uses string values like "VALID", "EXPIRED", "SUSPENDED",
--- "REVOKED", "NO LICENSE" plus oddities like "INTERNATIONAL LICENSE (VALID)"
--- and "REPORTED STOLEN (VALID)". Normalize to the CAD's enum.
+-- ERS uses string values like "VALID", "EXPIRED", "SUSPENDED", "REVOKED",
+-- "NO LICENSE" plus variants like "INTERNATIONAL LICENSE (VALID)" and
+-- "REPORTED STOLEN (VALID)". Normalize to the CAD's enum.
 local function NormalizeLicenseStatus(raw, isValidBool)
     if type(raw) == "string" and raw ~= "" then
         local up = raw:upper()
@@ -186,8 +184,8 @@ local function NormalizeLicenseStatus(raw, isValidBool)
 end
 
 -- ─── Build civilian payload from pedData ───────────────────────────────────
--- Captures the full new-ERS pedData surface area: name, demographics, contact
--- info, profile picture, all five license types (Car/Bike/Boat/Pilot/Truck),
+-- Covers the full ERS pedData surface: name, demographics, contact info,
+-- profile picture, all five license types (Car/Bike/Boat/Pilot/Truck),
 -- flags/markers, and MDT identifiers when night_shifts_mdt is running.
 local function BuildCivilianPayload(pedData, ersCalloutId)
     if not pedData then return nil end
@@ -211,7 +209,7 @@ local function BuildCivilianPayload(pedData, ersCalloutId)
         postalCode = pedData.PostalCode or nil,
         phone      = pedData.Phone or pedData.PhoneNumber or nil,
         email      = pedData.Email or nil,
-        -- Licenses — pass through raw + _Is_Valid so the route can normalize
+        -- Licenses - pass through raw + _Is_Valid so the route can normalize
         license_car            = pedData.License_Car or nil,
         license_car_is_valid   = pedData.License_Car_Is_Valid,
         license_bike           = pedData.License_Bike or nil,
@@ -237,8 +235,8 @@ local function BuildCivilianPayload(pedData, ersCalloutId)
 end
 
 -- ─── Build vehicle payload from vehicleData ────────────────────────────────
--- Captures the full new-ERS vehicleData surface area including compliance
--- (mot, insurance, tax, stolen, bolo) and metadata (vehicle_class, secondary
+-- Covers the full ERS vehicleData surface including compliance (mot,
+-- insurance, tax, stolen, bolo) and metadata (vehicle_class, secondary
 -- color, picture URL) from the MDT-merged path.
 local function BuildVehiclePayload(vehicleData, ersCalloutId)
     if not vehicleData then return nil end
@@ -268,10 +266,7 @@ end
 -- ERS EVENT HANDLERS
 -- ========================================================================
 
--- Register ALL ERS network events with RegisterNetEvent.
 -- ERS c_functions.lua fires TriggerServerEvent for each of these.
--- Using RegisterNetEvent (not RegisterServerEvent) for consistency —
--- the callout events that WORK use RegisterNetEvent, so use it everywhere.
 RegisterNetEvent("ErsIntegration::OnIsOfferedCallout")
 RegisterNetEvent("ErsIntegration::OnAcceptedCalloutOffer")
 RegisterNetEvent("ErsIntegration::OnArrivedAtCallout")
@@ -287,11 +282,7 @@ RegisterNetEvent("ErsIntegration::OnPursuitEnded")
 
 -- ─── OnIsOfferedCallout ────────────────────────────────────────────────────
 -- Fires when ERS offers a callout to a player (before they accept/decline).
--- We log the offered callout's identity unconditionally so we can verify
--- whether ERS is actually offering OUR dispatch-created callout, vs picking
--- a different entry from the shared pool. This is the only way to diagnose
--- the "I dispatched X but the player got offered Y" class of bugs without
--- access to night_ers internals.
+-- The offered callout's identity is logged unconditionally.
 AddEventHandler("ErsIntegration::OnIsOfferedCallout", function(calloutData)
     local src = source
     local cd = calloutData or {}
@@ -360,13 +351,11 @@ AddEventHandler("ErsIntegration::OnAcceptedCalloutOffer", function(calloutData)
                     })
                 end
 
-                -- NOTE: calloutData.FirstName/LastName is the 911 CALLER, not the
-                -- suspect. Actual suspect NPCs arrive via OnFirstNPCInteraction
-                -- (which requires forwarding code in night_ers/c_functions.lua).
-                -- We skip auto-creating the caller as a civilian since it's not
-                -- the person officers need to run in the system.
+                -- calloutData.FirstName/LastName is the 911 caller, not the
+                -- suspect; suspects arrive via OnFirstNPCInteraction, so the
+                -- caller is not created as a civilian.
                 if calloutData.FirstName and calloutData.LastName then
-                    DebugLog("Callout caller: " .. calloutData.FirstName .. " " .. calloutData.LastName .. " (not creating as civilian — this is the 911 caller)")
+                    DebugLog("Callout caller: " .. calloutData.FirstName .. " " .. calloutData.LastName .. " (not creating as civilian - this is the 911 caller)")
                 end
             end
         end)
@@ -431,8 +420,6 @@ AddEventHandler("ErsIntegration::OnCalloutCompletedSuccesfully", function(callou
     activeCallouts[tostring(source)] = nil
 end)
 
--- ─── Helper: Build traffic stop payload and POST to CAD ──────────────────
--- Defined here (before event handlers that reference it) because Lua
 -- ─── Helper: Get location data for a player ───────────────────────────────
 -- Server-side coords are always available. Street name comes from client callback.
 local pendingLocationCallbacks = {}
@@ -480,11 +467,8 @@ AddEventHandler('ErsIntegration::LocationResponse', function(locationData)
 end)
 
 -- ─── SendTrafficStop ──────────────────────────────────────────────────────
--- Builds and sends the traffic stop payload to the CAD API. Composes the
--- shared civilian + vehicle payload builders with the location + officer
--- context so the route gets every new-ERS field (License_Bike/Pilot/Truck,
--- ProfilePicture, FlagsOrMarkers, color_secondary, mot, vehicle_class,
--- bolo_description, mdt* identifiers, etc.).
+-- Builds the traffic stop payload (civilian + vehicle + location + officer)
+-- and sends it to the CAD API.
 local function SendTrafficStop(source, pedData, vehicleData, locationData)
     local loc = locationData or {}
     local civPayload = BuildCivilianPayload(pedData, nil) or {}
@@ -539,15 +523,11 @@ local function HandleTrafficStop(playerSource, pedData, vehicleData, locationDat
 end
 
 -- ─── OnFirstNPCInteraction ──────────────────────────────────────────────────
--- ERS fires this as a global client function with context values:
---   "on_interaction", "on_aiming_at_ped", "on_pullover", "on_pursuit_start",
---   "on_pursuit_end", "on_pullover_end"
--- This is the PRIMARY way pullover/pursuit NPC data reaches us, since ERS
--- does NOT fire OnPullover as a global function (it's internal to c_functions.lua).
---
--- ERS may fire this EITHER:
---   a) Directly on server: TriggerEvent(..., source, pedData, context)  → src=number
---   b) Via client callback: TriggerServerEvent(..., pedData, context)   → src=table
+-- Context values: "on_interaction", "on_aiming_at_ped", "on_pullover",
+-- "on_pursuit_start", "on_pursuit_end", "on_pullover_end".
+-- May arrive either directly on the server as
+-- TriggerEvent(..., source, pedData, context) or via client callback as
+-- TriggerServerEvent(..., pedData, context); the arg shapes differ.
 AddEventHandler("ErsIntegration::OnFirstNPCInteraction", function(srcOrPed, pedDataOrCtx, contextOrNil, locOrNil)
     local playerSource, pedData, context, locationData
 
@@ -566,7 +546,7 @@ AddEventHandler("ErsIntegration::OnFirstNPCInteraction", function(srcOrPed, pedD
         locationData = contextOrNil
     end
 
-    -- Always log NPC interactions (not debug-gated) so we can diagnose pullover issues
+    -- Logged unconditionally (not debug-gated)
     print("[CDE-ERS] OnFirstNPCInteraction source=" .. tostring(playerSource) .. " context=" .. tostring(context) .. " pedName=" .. tostring(pedData and (pedData.FirstName .. " " .. pedData.LastName) or "nil"))
 
     if not pedData then return end
@@ -693,7 +673,7 @@ end)
 -- player initiates a traffic stop / pullover.
 AddEventHandler("ErsIntegration::OnPullover", function(pedData, vehicleData, locationData)
     local src = source
-    -- Always log (not debug-gated) so we can confirm the event fires
+    -- Logged unconditionally (not debug-gated)
     print("[CDE-ERS] >>> OnPullover EVENT RECEIVED | src=" .. tostring(src) ..
         " | ped=" .. tostring(pedData and pedData.FirstName or "nil") ..
         " | veh=" .. tostring(vehicleData and vehicleData.license_plate or "nil"))
@@ -701,7 +681,7 @@ AddEventHandler("ErsIntegration::OnPullover", function(pedData, vehicleData, loc
     local key = tostring(src)
     -- Skip if already handled by OnFirstNPCInteraction + OnFirstVehicleInteraction
     if trafficStopHandled[key] then
-        DebugLog("OnPullover skipped — traffic stop already created via NPC/Vehicle interaction events")
+        DebugLog("OnPullover skipped - traffic stop already created via NPC/Vehicle interaction events")
         return
     end
     trafficStopHandled[key] = true
@@ -730,7 +710,7 @@ AddEventHandler("ErsIntegration::OnPursuitStarted", function(pedData, vehicleDat
     end
 end)
 
--- ─── OnPulloverEnded / OnPursuitEnded — close call and reset dedup flag ──────
+-- ─── OnPulloverEnded / OnPursuitEnded - close call and reset dedup flag ──────
 AddEventHandler("ErsIntegration::OnPulloverEnded", function(pedData, vehicleData)
     local key = tostring(source)
     DebugLog("Pullover ended for player " .. key .. ", resetting dedup flag")
@@ -769,26 +749,21 @@ end)
 
 -- ─── OnToggleShift ──────────────────────────────────────────────────────────
 -- Mirrors a player's ERS shift toggle to the CAD by hitting /ers/duty.
--- ERS's new s_functions.lua fires this with the signature
---   (source, isOnShift, serviceType)
--- where source is the FIRST argument (not the FiveM `source` global). The
--- previous version of this handler assumed (serviceType, isOnShift) and read
--- the global `source`, which produced "OnToggleShift (source=)" with empty
--- source in the diagnostic logs and silently broke the CAD duty sync.
+-- ERS fires this with the signature (source, isOnShift, serviceType);
+-- source is the first argument, not the FiveM `source` global.
 AddEventHandler("ErsIntegration::OnToggleShift", function(srcArg, isOnShift, serviceType)
     if not Config.ToggleDutyOnShift then return end
 
-    -- Prefer ERS's explicit source parameter; fall back to the global so that
-    -- a future client-side TriggerServerEvent (which omits source) still works.
+    -- Prefer the explicit source parameter; fall back to the global
     local src = tonumber(srcArg) or source
     if not src or src == 0 then
-        DebugLog("OnToggleShift skipped — no source resolved")
+        DebugLog("OnToggleShift skipped - no source resolved")
         return
     end
 
     local discordId = GetPlayerDiscordId(src)
     if not discordId then
-        DebugLog("OnToggleShift skipped — no Discord ID for player " .. tostring(src))
+        DebugLog("OnToggleShift skipped - no Discord ID for player " .. tostring(src))
         return
     end
 
@@ -953,11 +928,8 @@ RegisterCommand("ers_debug", function(source, args)
 end, true)
 
 -- ─── ers_exports ───────────────────────────────────────────────────────────
--- Enumerates every export the night_ers resource exposes. The fxmanifest
--- metadata route (GetResourceMetadata) returns 0 entries because night_ers
--- registers its exports at runtime via RegisterExport rather than
--- declaratively. So we also iterate the live exports['night_ers'] table —
--- that's what actually carries the runtime-registered exports.
+-- Lists night_ers exports from both the fxmanifest metadata and the live
+-- exports table (night_ers registers exports at runtime).
 -- Usage: ers_exports
 RegisterCommand("ers_exports", function(source, args)
     print("[CDE-ERS] ─── Listing night_ers exports ───")
@@ -975,8 +947,7 @@ RegisterCommand("ers_exports", function(source, args)
         print(string.format("[CDE-ERS]   shared :%s", tostring(name)))
     end
 
-    -- Runtime enumeration: iterate the live exports table. This catches
-    -- exports registered via the runtime API rather than the fxmanifest.
+    -- Catches exports registered via the runtime API rather than the fxmanifest
     print("[CDE-ERS] Runtime exports['night_ers']:")
     local runtimeCount = 0
     local nightExports = exports['night_ers']
@@ -998,8 +969,8 @@ RegisterCommand("ers_exports", function(source, args)
 end, true)
 
 -- ─── ers_inspect ─────────────────────────────────────────────────────────────
--- Dumps the structure of one callout from getCallouts() so we can see
--- the exact fields night_ers expects for createCallout().
+-- Dumps one callout from getCallouts() to show the fields createCallout()
+-- expects.
 -- Usage: ers_inspect
 RegisterCommand("ers_inspect", function(source, args)
     print("[CDE-ERS] ─── Inspecting night_ers callout structure ───")
@@ -1110,8 +1081,7 @@ RegisterCommand("ers_test_duty", function(source, args)
     end)
 end, true)
 
--- ─── Catch-all: log ALL ErsIntegration events for diagnostics ────────────
--- This helps diagnose which events ERS actually fires vs which we expect.
+-- ─── Catch-all: log all ErsIntegration events for diagnostics ────────────
 for _, evtName in ipairs({
     "OnToggleShift", "OnIsOfferedCallout", "OnAcceptedCalloutOffer",
     "OnArrivedAtCallout", "OnEndedACallout", "OnCalloutCompletedSuccesfully",
@@ -1141,8 +1111,7 @@ local function FindNearestOnShiftPlayer(coords)
         local ped = GetPlayerPed(playerId)
         if ped and ped ~= 0 then
             local pCoords = GetEntityCoords(ped)
-            -- Check if player is on ERS shift via client callback would be ideal,
-            -- but for simplicity we'll send to the nearest player
+            -- Shift status is not checked; the nearest player is used
             local dist = #(vector3(pCoords.x, pCoords.y, pCoords.z) - vector3(coords.x, coords.y, coords.z or 0.0))
             if dist < nearestDist then
                 nearestDist = dist
@@ -1154,13 +1123,8 @@ local function FindNearestOnShiftPlayer(coords)
     return nearest
 end
 
--- Dispatch flow (post-Sonoran-snippet finding): we add a clone to ERS's pool
--- via createCallout, capture the cloned callout ID returned in the response
--- table, forward it to the on-shift clients, and have them fire ERS's
--- internal NetEvent `night_ers:requestCallout(serviceType, calloutId)` —
--- which targets the offer at THAT specific clone instead of letting ERS pick
--- something random from the pool. The event is undocumented in the public
--- exports list but referenced in Sonoran's own ERS integration.
+-- Dispatch flow: clone a base callout into ERS's pool via createCallout,
+-- capture the cloned callout ID, then offer that specific clone to players.
 local function ProcessDispatchCallout(callout)
     local ersCalloutId = callout.ersCalloutId
     local callType    = callout.callType or "[ERS] Unknown"
@@ -1176,14 +1140,9 @@ local function ProcessDispatchCallout(callout)
     local cy = coords.y or 0.0
     local cz = coords.z or 0.0
 
-    -- Pick a string-keyed, non-cloned base callout that *matches the
-    -- intended service type*. ERS's requestCallout handler validates that
-    -- the requesting player's service satisfies the callout's
-    -- CalloutUnitsRequired flags — cloning, say, gas_smell (fire+ambulance)
-    -- and then firing requestCallout from a police officer gets silently
-    -- rejected. So we filter the base picker to callouts whose required
-    -- units include the dispatch's service type (defaulting to police —
-    -- the dispatch panel currently sends police-shape callouts).
+    -- Pick a string-keyed, non-cloned base callout matching the intended
+    -- service type; ERS silently rejects offers whose CalloutUnitsRequired
+    -- flags don't match the player's service. Defaults to police.
     local serviceType = callout.serviceType or "police"
     local requireField = ({
         police    = "policeRequired",
@@ -1241,21 +1200,13 @@ local function ProcessDispatchCallout(callout)
             print("[CDE-ERS] createCallout failed for dispatch callout " .. tostring(ersCalloutId))
         end
     else
-        print("[CDE-ERS] No base callout found in night_ers — dispatch callout not added to pool")
+        print("[CDE-ERS] No base callout found in night_ers - dispatch callout not added to pool")
     end
 
-    -- Direct-offer the cloned callout via ERS's official export
-    -- (SendCalloutOfferToPlayer, shipped in the night_ers update we asked
-    -- for). Replaces every previous workaround — no RegisterNetEvent hack,
-    -- no client-side TriggerServerEvent, no service-type matching for the
-    -- handler to validate against. ERS handles the Y/X offer UI natively.
-    --
-    -- IMPORTANT: the export blocks the calling thread via Citizen.Await
-    -- until the client posts back externalCalloutOfferResult (default 5s
-    -- watchdog). We fan out to every connected player in parallel via
-    -- CreateThread so a 5s wait per player doesn't add up to a stall.
-    -- The export returns multi-values (ok, reason) — pcall captures both
-    -- as args 2 and 3 since the inner function returns both.
+    -- Offer the cloned callout via the SendCalloutOfferToPlayer export.
+    -- The export blocks until the client responds (5s watchdog), so each
+    -- offer runs in its own thread. It returns (ok, reason); pcall captures
+    -- both as args 2 and 3.
     if clonedCalloutId then
         for _, playerId in ipairs(GetPlayers()) do
             local pid = tonumber(playerId)
@@ -1277,9 +1228,7 @@ local function ProcessDispatchCallout(callout)
         end
     end
 
-    -- Notify clients so they can drop a chat / blip / waypoint for context.
-    -- The actual offer UI is handled by ERS's SendCalloutOfferToPlayer
-    -- above; this event is informational only.
+    -- Informational client notification; the offer UI is handled by ERS above
     TriggerClientEvent('cde-ers:dispatchCallout', -1, {
         ersCalloutId    = ersCalloutId,
         clonedCalloutId = clonedCalloutId,
@@ -1338,7 +1287,7 @@ Citizen.CreateThread(function()
     end
 
     if Config.APIKey == "" then
-        DebugLog("Skipping dispatch callout polling — no API key configured")
+        DebugLog("Skipping dispatch callout polling - no API key configured")
         return
     end
 
