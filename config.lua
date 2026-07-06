@@ -13,17 +13,14 @@ Config = {}
 -- The URL loaded in the tablet NUI iframe.
 Config.TabletURL = "https://cdecad.com/login2"
 
--- Keybind to open/close the tablet (default: [ key)
--- Uses FiveM RegisterKeyMapping — players can rebind in Settings > Key Bindings > FiveM
+-- Keybind to open/close the tablet (rebindable in FiveM keybind settings)
 Config.TabletKey         = "LBRACKET"
 Config.TabletDescription = "Open/Close CAD Tablet"
 
--- Dim the tablet when the mouse moves outside of it
--- When true, the tablet fades to 15% opacity when the cursor leaves it
-Config.TabletDimmer = true
+-- Fade the tablet to 15% opacity when the cursor leaves it
+Config.TabletDimmer = false
 
--- Prevent the tablet from auto-redirecting to /home after login
--- When true, the NUI will block navigation to /home and stay on the current page
+-- Block the NUI from auto-redirecting to /home after login
 Config.PreventAutoRedirect = true
 
 -- ========================================
@@ -36,8 +33,7 @@ Config.EnableCallPopup = true
 Config.CallPopupKey         = "G"
 Config.CallPopupDescription = "Toggle Call Details Popup"
 
--- How often (in ms) to poll the CAD for updated call data
--- Only polls while the popup is visible; stops when hidden
+-- How often (ms) to poll the CAD for call updates (only while popup is visible)
 Config.CallPollInterval = 10000  -- 10 seconds
 
 -- Auto-hide the popup after this many seconds (0 = never auto-hide)
@@ -56,32 +52,22 @@ Config.Framework = {
 Config.RequireOnDuty = false
 
 -- ========================================
--- LOCATION TRACKING (optional — replaces cde_lm livemap)
+-- LOCATION TRACKING (optional - replaces cde_lm livemap)
 -- ========================================
--- When enabled, this resource pushes the player's GPS location to the CAD
--- livemap on a timer, mirroring what cde_lm does. Useful for servers that
--- don't want to run a separate livemap script.
---
--- IMPORTANT: do NOT enable this if you also run cde_lm — you'll get duplicate
--- updates. The resource will print a warning if it detects cde_lm running.
+-- Pushes player GPS locations to the CAD livemap on a timer.
+-- Leave disabled if cde_lm is running (duplicate updates).
 Config.LocationTracking = {
     Enabled         = false,         -- Master switch (off by default)
 
-    -- Where to read the player's duty status from:
-    --   'auto'     — try CDE_Duty → ESX → QBCore → CAD (in that order)
-    --   'cde_duty' — exports.CDE_Duty:GetDutyStatus()
-    --   'esx'      — ESX PlayerData.job
-    --   'qbcore'   — QBCore PlayerData.job
-    --   'cad'      — poll CAD's /api/fivem/unit-active (no duty script needed;
-    --                user goes "on duty" by clicking Begin Shift in CAD)
+    -- Duty status source: 'auto' (CDE_Duty > ESX > QBCore > CAD), 'cde_duty',
+    -- 'esx', 'qbcore', or 'cad' (polls /api/fivem/unit-active, no duty script needed)
     DutySource      = 'auto',
 
     Interval        = 10000,         -- ms between location pushes
     MinDistance     = 50.0,          -- GTA units; skip update if moved less
     LEOOnly         = false,         -- only track LEO (police/sheriff) depts
 
-    -- For DutySource = 'cad': how often to ask the CAD if the user is active.
-    -- Cheap call (lean DB read), but no need to hammer it.
+    -- For DutySource = 'cad': ms between active-unit checks against the CAD
     CADActiveCheckInterval = 30000,
 
     SendOfflineOnDisconnect = true,  -- Push status='Offline' on resource stop
@@ -99,9 +85,7 @@ end
 -- ════════════════════════════════════════════════════════════════════
 do
     local Config
--- config.lua
 -- CDE Duty System Configuration
--- Version 3.2.0 - Added department support
 
 Config = {}
 
@@ -398,9 +382,8 @@ Config.Messages = {
 -- ========================================
 -- CAD INTEGRATION (Traffic Stop /ts)
 -- ========================================
--- Used by the /ts command to POST to /api/fivem/traffic-stop on the CAD
--- backend.  This creates a Traffic Stop call and auto-attaches the calling
--- unit (resolved by Discord ID) to it.
+-- /ts POSTs to /api/fivem/traffic-stop, creating a Traffic Stop call and
+-- attaching the calling unit (resolved by Discord ID)
 
 Config.CAD = {
     Debug = false,
@@ -436,7 +419,7 @@ Config.Discord = {
     -- Time tracking settings
     TimeTracking = {
         Enabled = true,
-        SaveInterval = 900, -- Save time data every 10 minutes (in seconds)
+        SaveInterval = 900, -- Seconds between time-data saves
         ShowTimeInWebhook = true,
         MinimumDutyTime = 300 -- Minimum seconds on duty before tracking (prevents spam)
     },
@@ -504,10 +487,7 @@ Config = {}
 -- PERSISTENCE CONFIGURATION
 -- =============================================================================
 
--- How to persist selected civilian across sessions
--- Options: 'kvp', 'mysql'
--- 'kvp' - Uses FiveM's built-in Key-Value storage (no database needed)
--- 'mysql' - Uses MySQL database (requires oxmysql)
+-- Selected-civilian persistence: 'kvp' (built-in storage) or 'mysql' (requires oxmysql)
 Config.Persistence = 'kvp'
 
 -- MySQL table name (only used if Persistence = 'mysql')
@@ -527,8 +507,7 @@ Config.Commands = {
     -- Command to open bank
     Bank = 'bank',
 
-    -- Command to open the admin bank panel (bank employees only).
-    -- Tip: use 'adminbank' or set to a chat-friendly name like 'bnkadmin'.
+    -- Command to open the admin bank panel (bank employees only)
     AdminBank = 'adminbank',
     
     -- Command to register current vehicle
@@ -549,15 +528,8 @@ Config.IDCard = {
     -- Show HTML ID card UI
     ShowHTML = true,
 
-    -- Which renderer to use when the HTML card is shown.
-    --   'template' — pulls a baked PNG of the civilian's data composited on
-    --                the community-uploaded license template (managed from
-    --                the Community Admin panel → Settings → License
-    --                Templates). Falls back to the classic card if no
-    --                template is configured.
-    --   'html'     — the legacy hard-coded HTML card (uses CardStyle below).
-    --   'auto'     — try the template renderer first; if the community
-    --                hasn't uploaded one, render the classic HTML card.
+    -- Card renderer: 'template' (community-uploaded license template PNG),
+    -- 'html' (classic card, uses CardStyle below), 'auto' (template, fallback to html)
     LicenseMode = 'auto',
 
     -- Also output to chat/skybox
@@ -575,8 +547,7 @@ Config.IDCard = {
     -- Enable ox_target integration (look at player -> Show ID / Request ID)
     UseOxTarget = true,
 
-    -- ID Card appearance (used by LicenseMode = 'html' and as fallback for
-    -- 'auto' when no template is configured for this community).
+    -- Card appearance for LicenseMode = 'html' (and 'auto' fallback)
     CardStyle = {
         -- State name on the ID
         StateName = 'San Andreas',
@@ -618,9 +589,7 @@ Config.Bank = {
     -- Transaction fee percentage (0 = no fee)
     TransferFee = 0,
 
-    -- Admin/banker access (enables /adminbank in-game)
-    -- The CAD validates that the calling player has a bank-employee role
-    -- (configured per community). Without it, the command is rejected.
+    -- Enable /adminbank (CAD validates the player's bank-employee role)
     AdminEnabled = true
 }
 
@@ -664,11 +633,8 @@ Config.Notifications = {
 -- MUGSHOT CONFIGURATION
 -- =============================================================================
 
--- Automatically capture an in-game FiveM mugshot when a civilian is selected
--- and upload it to the CAD as a fallback photo.
--- Set to false (recommended) when your players upload custom photos via the
--- CAD portal — the CAD photo is always the source of truth and will never
--- be overwritten by an in-game capture regardless of this setting.
+-- Capture an in-game mugshot on civilian select and upload it to the CAD
+-- as a fallback photo (never overwrites a photo uploaded via the CAD)
 Config.CaptureFiveMMugshot = false
 
 -- =============================================================================
@@ -700,6 +666,7 @@ Config.CommandAnon     = 'a911'      -- /a911 <message>  (anonymous)
 -- ═══════════════════════════════════════════════════════════════════
 Config.DefaultCallType = '911 Call'           -- Call type shown in CAD
 Config.AnonCallerName  = 'Anonymous'          -- Caller name for /a911
+Config.LbPhone         = true                 -- Attach caller's phone number to /911 calls: lb-phone when running, else the active civilian's registered number (anonymous calls excluded)
 Config.DefaultPriority = 'normal'             -- low | normal | medium | high | critical
 Config.CooldownSeconds = 10                   -- Cooldown between 911 calls per player
 
@@ -736,6 +703,121 @@ Config.NPCReports = {
         Cameras    = {},
     },
 }
+
+-- ═══════════════════════════════════════════════════════════════════
+-- ALPR CAMERAS (Automatic License Plate Readers)
+-- Fixed camera posts placed in-game. Passing plates are matched against
+-- the CAD flagged-plate list; a hit auto-opens a 911 call at the camera.
+-- ═══════════════════════════════════════════════════════════════════
+Config.ALPR = {
+    Enabled = true,
+
+    -- Chat command to manage cameras: /alprcam place|remove|list|clear
+    Command = 'alprcam',
+    -- Additional command aliases
+    CommandAliases = { 'alpr' },
+
+    -- Only on-duty LEOs may place/remove cameras (false = anyone)
+    RequireOnDutyLEO = true,
+
+    -- Detection geometry.
+    CameraRadius      = 35.0,   -- how close (m) a vehicle must pass to be read
+    ClientActiveRange = 200.0,  -- only clients within this of a camera scan it
+    ScanInterval      = 1200,   -- ms between proximity sweeps on each client
+
+    -- When true, only read plates inside a forward-facing cone of FOV total
+    -- degrees; false = scan all directions within CameraRadius
+    Directional = true,
+    FOV         = 120.0,
+
+    -- Placement preview: , and . cycle models, mouse wheel rotates, Enter
+    -- confirms, Backspace cancels. false = place instantly at your feet
+    PlacementUI = true,
+
+    IgnoreEmergencyVehicles = true,  -- skip GTA emergency-class (18) vehicles
+    -- Only read plates on player-driven vehicles (ignore AI traffic)
+    OnlyPlayerVehicles      = true,
+
+    -- Server-side dedup: one auto-911 per (camera, plate) within this window
+    CallCooldownSeconds = 300,
+
+    -- 'caution' = every flagged plate fires; 'alert' = only stolen/BOLO/warrant.
+    -- Non-empty AlertFlags overrides: hit fires only on matching flag keywords,
+    -- e.g. { 'STOLEN', 'BOLO', 'WARRANT' }
+    MinAlertLevel = 'caution',
+    AlertFlags    = {},
+
+    -- Speed-limit choices offered by the /alpr panel picker
+    SpeedOptions = { 25, 35, 45, 55, 65, 70, 80 },
+
+    -- LEO alert on a camera hit: chat line, flashing map blip, sound
+    Alerts = {
+        Enabled      = true,
+        LEOOnly      = true,   -- only on-duty LEOs get it (false = everyone)
+        Chat         = true,
+        Blip         = true,
+        BlipDuration = 60,     -- seconds the flashing hit blip stays up
+        Sound        = true,
+    },
+
+    -- Call type for speed-camera hits (/alpr speed <id> <mph> sets a limit)
+    SpeedCallType = 'ALPR Speed',
+
+    -- Scene photo on each hit, uploaded to the CAD (requires screenshot-basic;
+    -- skipped when it isn't running)
+    Screenshots = {
+        Enabled        = true,
+        RetentionHours = 24,   -- CAD deletes the image after this (1-72)
+
+        -- true = capture from the camera's viewpoint (brief render switch),
+        -- false = capture the reporting officer's own view
+        CameraPOV = true,
+        POVFov    = 55.0,
+
+        -- Burn a CCTV-style overlay into the photo (REC dot, name, time, plate)
+        Overlay = true,
+    },
+
+    -- Auto-911 call appearance
+    CallType   = 'ALPR Hit',
+    CallerName = 'ALPR Camera',
+    -- Priority follows the plate's alertLevel: alert = high, caution = normal
+
+    -- Minutes between flagged-plate cache refreshes (/alpr refresh forces one)
+    CacheRefreshMinutes = 60,
+
+    -- Map blip for each camera.
+    Blip = {
+        Enabled = true,
+        Sprite  = 184,   -- camera icon
+        Color   = 5,     -- yellow
+        Scale   = 0.8,
+        Label   = 'ALPR Camera',
+    },
+
+    -- Camera prop spawned at each placement; models must be valid base-game
+    -- props. /alprcam place <number|model> picks one, Model is the default
+    Prop = {
+        Enabled = true,
+        Model   = 'prop_cctv_cam_04a',
+        -- Degrees added to the stored heading so the detection cone and blip
+        -- match the lens (stock cctv props face backwards). 0 = lens faces forward
+        LensOffset = 180.0,
+        Models  = {
+            'prop_cctv_cam_04a',
+            'prop_cctv_cam_04b',
+            'prop_cctv_cam_05a',
+            'prop_cctv_cam_02a',
+            'prop_cctv_cam_01b',
+        },
+    },
+
+    -- Ground marker drawn when standing near a camera
+    Marker = {
+        Enabled      = false,
+        DrawDistance = 40.0,
+    },
+}
     _G.Cad911Config = Config
 end
 
@@ -745,8 +827,7 @@ end
 do
     local Config = {}
 
-    -- Master toggle. When false the wraith client/server scripts return
-    -- immediately and register no events, threads, or commands.
+    -- Master toggle; when false the wraith scripts register nothing
     Config.Enabled = true
 
     -- API URL + key + community ID come from convars (read at the top of each module's server.lua).
@@ -790,6 +871,23 @@ do
         Detailed = true,
     }
 
+    -- /reader: MDT-style in-car ALPR console. Display-only passive sweep of
+    -- nearby vehicles against the CAD flag cache; never fires alerts or 911s.
+    -- /cdelockfront and /cdelockrear lock the plate ahead/behind through the
+    -- CAD pipeline, for wk builds that don't emit wk:onPlateLocked.
+    Config.LockFallback = {
+        Enabled = true,
+        Range   = 35.0,  -- meters to search ahead/behind for the target
+    }
+
+    Config.Reader = {
+        Enabled = true,
+        Command = 'reader',
+        ScanRadius    = 45.0,  -- read vehicles within this many meters
+        ScanInterval  = 1500,  -- ms between sweeps while the console is open
+        PlateCooldown = 45,    -- seconds before re-listing the same plate
+    }
+
     Config.Debug = false
 
     _G.WraithConfig = Config
@@ -801,8 +899,7 @@ end
 do
     local Config = {}
 
-    -- Master toggle. When false the ers client/server scripts return
-    -- immediately and register no events, threads, or commands.
+    -- Master toggle; when false the ers scripts register nothing
     Config.Enabled = true
 
     -- CADEndpoint + APIKey come from convars (read at the top of each module's server.lua).
@@ -820,64 +917,4 @@ do
     Config.ToggleDutyOnShift       = true
 
     _G.ErsConfig = Config
-end
-
--- ════════════════════════════════════════════════════════════════════
--- PANIC BUTTON
--- ════════════════════════════════════════════════════════════════════
-do
-    local Config
-Config = {}
-
-Config.Debug = false                     -- Print HTTP request/response debug info
-
--- ═══════════════════════════════════════════════════════════════════
--- COMMAND & KEYBIND
--- ═══════════════════════════════════════════════════════════════════
-Config.Command       = 'panic'      -- Chat command (/panic)
-Config.KeybindKey    = 'Y'          -- Default key (players can rebind in FiveM settings)
-Config.KeybindLabel  = 'Panic Button'
-
-Config.CooldownSeconds     = 30     -- Cooldown between panic activations (per player)
-Config.BlipDurationSeconds = 60     -- How long the red blip/route shows
-
--- ═══════════════════════════════════════════════════════════════════
--- DUTY RESTRICTIONS
--- ═══════════════════════════════════════════════════════════════════
--- Only on-duty LEOs may activate the panic button, and only on-duty LEOs
--- receive the panic blip/route/alert. Uses the bundle's own duty state
--- (the duty module's IsOnDutyLEO / IsPlayerOnDutyLEO / GetOnDutyLEOUnits).
-Config.RequireOnDutyLEO   = true    -- Only on-duty LEOs can press panic
-Config.BroadcastToLEOOnly = true    -- Only on-duty LEOs receive the alert
-
--- ═══════════════════════════════════════════════════════════════════
--- AUTO 911 CALL
--- ═══════════════════════════════════════════════════════════════════
-Config.Auto911          = true              -- Automatically create a 911 call on panic
-Config.Auto911CallType  = 'Officer Panic'   -- Call type shown in CAD
-Config.Auto911Caller    = 'SYSTEM - PANIC'  -- Caller name shown in CAD
-
--- ═══════════════════════════════════════════════════════════════════
--- BLIP SETTINGS
--- ═══════════════════════════════════════════════════════════════════
-Config.BlipSprite   = 526   -- Blip icon (526 = skull / danger)
-Config.BlipColor    = 1     -- Red
-Config.BlipScale    = 1.5   -- Blip size on map
-Config.BlipFlashes  = true  -- Blip flashes on minimap
-Config.ShowRoute    = true  -- Draw GPS route to panicking officer
-
--- ═══════════════════════════════════════════════════════════════════
--- CHAT MESSAGES
--- ═══════════════════════════════════════════════════════════════════
-Config.ChatEnabled = true
-Config.ChatColor   = { 255, 50, 50 }  -- Red text
-
-Config.Messages = {
-    activated = '^1[PANIC] ^0Officer ^3%s^0 has activated their panic button! Location: ^3%s',
-    cooldown  = '^1[PANIC] ^0You must wait %d seconds before using panic again.',
-    cleared   = '^1[PANIC] ^0Panic alert for ^3%s^0 has expired.',
-    notOnDuty = '^1[PANIC] ^0Only on-duty LEOs can use the panic button.',
-}
-
-    _G.PanicConfig = Config
 end
