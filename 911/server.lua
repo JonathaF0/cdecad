@@ -62,6 +62,26 @@ local function GetPlayerNameSafe(src)
     return GetPlayerName(src) or ('Player ' .. src)
 end
 
+-- Caller's phone number: lb-phone when running, otherwise the active CAD
+-- civilian's registered number. nil when neither is available.
+local function GetCallerPhone(src)
+    if Config.LbPhone == false then return nil end
+    if GetResourceState('lb-phone') == 'started' then
+        local ok, num = pcall(function()
+            return exports['lb-phone']:GetEquippedPhoneNumber(src)
+        end)
+        if ok and type(num) == 'string' and num ~= '' then return num end
+    end
+    local ok, civ = pcall(function()
+        return exports[GetCurrentResourceName()]:GetActiveCivilian(src)
+    end)
+    if ok and type(civ) == 'table' then
+        local phone = civ.phone or civ.secondaryPhone
+        if type(phone) == 'string' and phone ~= '' then return phone end
+    end
+    return nil
+end
+
 -- ─── 911 Call Event ─────────────────────────────────────────────
 
 RegisterNetEvent('cad-911:call')
@@ -94,6 +114,7 @@ AddEventHandler('cad-911:call', function(data)
     CadRequest('911', {
         callType    = Config.DefaultCallType,
         callerName  = callerName,
+        callerNumber = (not data.anon) and GetCallerPhone(src) or nil,
         location    = location,
         postal      = postal,
         coordinates = coords,
@@ -150,15 +171,13 @@ AddEventHandler('playerDropped', function()
 end)
 
 -- ─── Startup configuration check ───────────────────────────────
--- Warn loudly if the resource starts without an API key. The most common
--- "/911 doesn't work" cause is leaving Config.ApiKey blank.
 AddEventHandler('onResourceStart', function(resource)
     if resource ~= GetCurrentResourceName() then return end
     if not Config.ApiKey or Config.ApiKey == '' then
-        print('^1[cad-911] Config.ApiKey is empty — /911 calls will fail with 401. Set it in config.lua.^7')
+        print('^1[cad-911] Config.ApiKey is empty - /911 calls will fail with 401. Set it in config.lua.^7')
     end
     if not Config.CadUrl or Config.CadUrl == '' then
-        print('^1[cad-911] Config.CadUrl is empty — /911 will not be able to reach the CAD.^7')
+        print('^1[cad-911] Config.CadUrl is empty - /911 will not be able to reach the CAD.^7')
     end
 end)
 
