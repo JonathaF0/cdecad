@@ -1,8 +1,6 @@
 do
     local Config = DutyConfig
--- client.lua
--- CDE Duty System - Clean Client Version
--- Version 4.0.0 - No Blips, Lowercase Radio Agency
+-- CDE Duty System - Client
 
 -- ========================================
 -- VARIABLES
@@ -29,10 +27,9 @@ AddEventHandler('CDE:SetRadioAgency', function(agency)
         agency = string.lower(agency)
         print("^3[CDE-DUTY] Setting radio agency: " .. agency .. "^0")
         
-        -- Execute the command CLIENT-SIDE
         ExecuteCommand("setradioagency " .. agency)
-        
-        -- Also try with capital S if the first doesn't work
+
+        -- Also try the capitalized command variant
         Citizen.SetTimeout(500, function()
             ExecuteCommand("setRadioAgency " .. agency)
         end)
@@ -59,13 +56,8 @@ end)
 
 RegisterNetEvent('CDE:ReceivePaycheck')
 AddEventHandler('CDE:ReceivePaycheck', function(amount)
-    -- This is for standalone/custom money systems
-    -- You can trigger your custom money-adding event here
-    
-    -- Example for custom framework:
-    -- TriggerServerEvent('your_money_system:addCash', amount)
-    
-    -- Visual feedback
+    -- Hook point for standalone/custom money systems
+
     SetNotificationTextEntry("STRING")
     AddTextComponentString("~g~PAYCHECK~n~~w~+$" .. amount .. " added to cash")
     DrawNotification(false, true)
@@ -80,8 +72,7 @@ end)
 
 RegisterNetEvent('CDE:SetLEOStatus')
 AddEventHandler('CDE:SetLEOStatus', function(status)
-    -- This event is received from server when LEO status changes
-    -- Used by CAD-911 system to prevent NPC reports
+    -- LEO status from server; used by the CAD-911 system to prevent NPC reports
     if status then
         print("^2[CDE-DUTY] LEO status: Active^0")
     else
@@ -268,8 +259,8 @@ local function StoreLockedPlate(cam, plate)
 end
 
 -- Wraith ARS 2X fires `wk:onPlateLocked` server-side; the duty server mirrors
--- it back via CDE:WraithPlateLocked. Listen for both — the local one is a
--- no-op fallback in case a build of Wraith also fires it client-side.
+-- it back via CDE:WraithPlateLocked. Both are listened to in case a Wraith
+-- build also fires it client-side.
 RegisterNetEvent('wk:onPlateLocked')
 AddEventHandler('wk:onPlateLocked', function(cam, plate, index)
     StoreLockedPlate(cam, plate)
