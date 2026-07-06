@@ -43,9 +43,10 @@
   <script src="tablet/script.js"></script>
 
   <script>
-    // ─── Lazy iframe factory for sub-NUIs ──────────────────────────────
-    function lazyIframe(src) {
-      var f = null;
+    // Lazy iframe factory for sub-NUIs.
+    // passiveZ orders passive frames among themselves (all below the tablet's 9999).
+    function lazyIframe(src, passiveZ) {
+      var f = null, loaded = false, pending = [];
       var PARENT = (typeof GetParentResourceName === 'function') ? GetParentResourceName() : 'CDECAD';
       return {
         get: function () {
@@ -55,17 +56,31 @@
           f.style.cssText = 'position:fixed;inset:0;width:0;height:0;border:0;background:transparent;pointer-events:none;';
           document.body.appendChild(f);
           f.addEventListener('load', function () {
+            loaded = true;
             try { f.contentWindow.GetParentResourceName = function () { return PARENT; }; } catch (_) {}
+            for (var i = 0; i < pending.length; i++) {
+              try { f.contentWindow.postMessage(pending[i], '*'); } catch (_) {}
+            }
+            pending = [];
           });
           return f;
+        },
+        // Queue until the iframe has loaded its listener, or the message is lost.
+        post: function (d) {
+          this.get();
+          if (!loaded) { pending.push(d); return; }
+          try { f.contentWindow.postMessage(d, '*'); } catch (_) {}
         },
         size: function (state) {
           if (!f && state === 'closed') return;
           var el = this.get();
           if (state === 'interactive') {
+            // Modal sub-UIs (e.g. the civ bank) sit above the tablet and take clicks.
             el.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;background:transparent;pointer-events:auto;z-index:11000;';
           } else if (state === 'passive') {
-            el.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;background:transparent;pointer-events:none;z-index:11000;';
+            // Passive popups stay below the tablet (9999); a pointer-events:none
+            // iframe above it would block tablet clicks in CEF's hit-test.
+            el.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;background:transparent;pointer-events:none;z-index:' + (passiveZ || 9990) + ';';
           } else {
             el.style.cssText = 'position:fixed;inset:0;width:0;height:0;border:0;background:transparent;pointer-events:none;';
           }
@@ -74,25 +89,31 @@
     }
 
     var civ    = lazyIframe('civ/index.html');
-    var wraith = lazyIframe('wraith/index.html');
+    var wraith = lazyIframe('wraith/index.html', 9993); // lock popup paints over the reader console
+    var reader = lazyIframe('reader/index.html', 9990);
 
-    // Route action-keyed messages by their specific action name.
+    // Route messages by action name. 'keep' forwards without resizing.
     var CIV_ACTIONS      = { showID: 'passive', openBank: 'interactive', openAdminBank: 'interactive', hideID: 'closed', closeBank: 'closed' };
     var WRAITH_ACTIONS   = { showPlateResult: 'passive', hidePlateResult: 'closed' };
+    var READER_ACTIONS   = { readerShow: 'passive', readerHide: 'closed', readerScan: 'keep' };
 
     window.addEventListener('message', function (e) {
       var d = e.data || {};
       if (!d.action) return;
       if (CIV_ACTIONS[d.action] !== undefined) {
-        try { civ.get().contentWindow.postMessage(d, '*'); } catch (_) {}
+        civ.post(d);
         civ.size(CIV_ACTIONS[d.action]);
       } else if (WRAITH_ACTIONS[d.action] !== undefined) {
-        try { wraith.get().contentWindow.postMessage(d, '*'); } catch (_) {}
+        wraith.post(d);
         wraith.size(WRAITH_ACTIONS[d.action]);
+      } else if (READER_ACTIONS[d.action] !== undefined) {
+        reader.post(d);
+        var rs = READER_ACTIONS[d.action];
+        if (rs !== 'keep') reader.size(rs);
       }
     });
 
-    // ─── Replay early messages ─────────────────────────────────────────
+    // Replay messages buffered before the handlers registered.
     (function () {
       window.removeEventListener('message', window.__nuiBufHandler);
       var buf = window.__nuiBuf || [];
