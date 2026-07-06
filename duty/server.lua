@@ -15,7 +15,11 @@ do
     Config.Discord.Webhooks = Config.Discord.Webhooks or {}
     Config.Discord.Webhooks.Duty     = GetConvar('CDE_CAD_WEBHOOK_DUTY', '')
     Config.Discord.Webhooks.Paycheck = GetConvar('CDE_CAD_WEBHOOK_PAYCHECK', '')
+-- CDE Duty System - Server
 
+-- ========================================
+-- INITIALIZE TABLES
+-- ========================================
 PlaytimeTracker = {}
 OnDutyUnits = {}
 OnDutyLEOUnits = {}
@@ -89,7 +93,8 @@ end
 -- CAD BACKEND SYNC (/api/fivem/cde-duty)
 -- ========================================
 -- Mirrors on/off-duty events to the CAD so the supervisor panel can show
--- in-game duty time alongside CAD duty time. 
+-- in-game duty time alongside CAD duty time. No-ops silently if Config.CAD
+-- isn't configured (test servers without a CAD stay quiet).
 
 function SendCdeDutyToCad(discordId, onShift, department, callSign, durationSec)
     if not Config or not Config.CAD then return end
@@ -192,7 +197,7 @@ function StartPaycheckTimer(playerId, department)
         amount = Config.Departments[department].paycheck
     end
     
-    -- Schedule paycheck for 30 minutes (1800000ms) from now
+    -- Schedule the next paycheck
     local payInterval = (Config.Paychecks.Interval or 30) * 60000 -- Config value in minutes, convert to ms
     
     print("^3[CDE-DUTY] Scheduled paycheck for " .. GetPlayerName(playerId) .. " in " .. (payInterval / 60000) .. " minutes ($" .. amount .. ")^0")
@@ -378,7 +383,7 @@ RegisterCommand("d", function(source, args, rawCommand)
         StartPaycheckTimer(source, type)
         
         -- Set radio - use lowercase department code (not callSign)
-        local radioAgency = string.lower(type) -- Use the department code (sasp, lcso, etc)
+        local radioAgency = string.lower(type)
         TriggerClientEvent("CDE:SetRadioAgency", source, radioAgency)
         print("^2[CDE-DUTY] Setting radio agency to: " .. radioAgency .. "^0")
         
@@ -418,9 +423,8 @@ end, false)
 -- ========================================
 -- TRAFFIC STOP (/ts) -> CAD BACKEND
 -- ========================================
--- The /ts command is fired client-side from the Wraith plate reader workflow.
--- We forward it to /api/fivem/traffic-stop on the CAD backend, which creates
--- a Traffic Stop call and auto-attaches the unit (resolved by Discord ID).
+-- Forwards the client-side /ts command to /api/fivem/traffic-stop, which
+-- creates a Traffic Stop call and auto-attaches the unit by Discord ID.
 
 local TS_B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 local function TSBase64Encode(data)
@@ -438,9 +442,8 @@ end
 
 local trafficStopCooldowns = {}
 
--- Wraith ARS 2X fires `wk:onPlateLocked` as a server-side net event only.
--- Mirror it back to the originating client so the duty system can remember
--- the locked plate for /ts.  
+-- Wraith ARS 2X fires `wk:onPlateLocked` as a server-side net event only;
+-- mirror it back to the originating client so /ts can use the locked plate.
 RegisterNetEvent('wk:onPlateLocked')
 AddEventHandler('wk:onPlateLocked', function(cam, plate, index)
     local src = source
@@ -703,6 +706,8 @@ AddEventHandler("playerDropped", function(reason)
     
     if wasOnDuty then
         print("^3[CDE-DUTY] " .. playerName .. " disconnected while on duty^0")
+        -- Snapshot identity and duty start before cleanup so the open
+        -- CAD-side duty session can be closed
         local discordId = GetDiscordID(serverId)
         local dutyStart = PlaytimeTracker[serverId]
         local timePlayed = dutyStart and (os.time() - dutyStart) or 0
@@ -714,8 +719,7 @@ AddEventHandler("playerDropped", function(reason)
             local cadCallSign = deptInfo.callSign
             SendCdeDutyToCad(discordId, false, cadDept, cadCallSign, timePlayed)
         else
-            -- Department config is gone (deleted while the player was on
-            -- duty?) , still close the CAD-side session
+            -- Department config missing; still close the CAD-side session
             SendCdeDutyToCad(discordId, false, department, nil, timePlayed)
         end
     end
@@ -728,8 +732,8 @@ end)
 -- ========================================
 -- RESOURCE LIFECYCLE
 -- ========================================
--- Close every in-game duty session on the CAD when this resource is stopped
--- (server shutdown, manual restart, etc.). 
+-- Close every open CAD duty session when this resource stops
+-- (server shutdown, manual restart, etc.)
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
     print("^3[CDE-DUTY] Resource stopping , closing CAD duty sessions for " .. #OnDutyUnits .. " players^0")
