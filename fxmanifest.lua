@@ -4,8 +4,7 @@ game 'gta5'
 name 'CDECAD'
 description 'CDECAD with SA lore departments (LSPD, LCSO, SASP, BCSO, LSFD, BCFD).'
 author 'CDE Inc'
-version '4.0.0'
-
+version '6.0.0'
 lua54 'yes'
 
 shared_scripts {
@@ -22,6 +21,7 @@ server_scripts {
     'civ/server_main.lua',
     '911/server.lua',
     '911/alpr_server.lua',
+    'panic/server.lua',
     'wraith/server.lua',
     'ers/server.lua',
 }
@@ -35,6 +35,7 @@ client_scripts {
     '911/client.lua',
     '911/npc.lua',
     '911/alpr_client.lua',
+    'panic/client.lua',
     'wraith/client.lua',
     'ers/client.lua',
 }
