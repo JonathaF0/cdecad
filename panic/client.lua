@@ -1,6 +1,10 @@
 do
     local Config = PanicConfig
-local activePanics = {}  
+-- ═══════════════════════════════════════════════════════════════════
+-- CLIENT-SIDE PANIC BUTTON
+-- ═══════════════════════════════════════════════════════════════════
+
+local activePanics = {}   -- { [serverId] = { blip, routeBlip, name, expires } }
 local lastPanicTime = 0
 
 -- ─── Helpers ────────────────────────────────────────────────────
@@ -19,18 +23,18 @@ local function GetPlayerNameSafe()
     return GetPlayerName(PlayerId()) or 'Unknown'
 end
 
+-- local duty check for fast feedback; the server re-checks before broadcasting
 local function IsLocalOnDutyLEO()
     local ok, res = pcall(function()
-        return exports['CDECAD']:IsOnDutyLEO()
+        return exports[GetCurrentResourceName()]:IsOnDutyLEO()
     end)
     if ok and res ~= nil then
         return res and true or false
     end
-
     return true
 end
 
-
+-- postal code from nearest-postal / postal-code, '' when unavailable
 local function GetNearestPostal(coords)
     local ok, result = pcall(function()
         return exports['nearest-postal']:getClosestPostal(coords)
@@ -96,7 +100,6 @@ end
 -- ─── Panic Activation (client requests server to broadcast) ─────
 
 local function ActivatePanic()
-    -- Only on-duty LEOs may activate the panic button.
     if Config.RequireOnDutyLEO and not IsLocalOnDutyLEO() then
         if Config.ChatEnabled then
             TriggerEvent('chat:addMessage', {
@@ -127,7 +130,6 @@ local function ActivatePanic()
     local street = GetStreetName(coords)
     local postal = GetNearestPostal(coords)
 
-    -- Tell the server — it handles CAD integration and broadcasts to all clients
     TriggerServerEvent('cdecad-panic:activate', {
         name   = GetPlayerNameSafe(),
         coords = { x = coords.x, y = coords.y, z = coords.z },
@@ -173,7 +175,7 @@ AddEventHandler('cdecad-panic:broadcast', function(data)
         })
     end
 
-    -- Brief red screen flash (NOT the death camera)
+    -- brief red screen flash
     AnimpostfxPlay('MP_OrbitalCannon', 0, false)
     Citizen.SetTimeout(200, function()
         AnimpostfxStop('MP_OrbitalCannon')
