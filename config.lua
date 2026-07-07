@@ -18,7 +18,7 @@ Config.TabletKey         = "LBRACKET"
 Config.TabletDescription = "Open/Close CAD Tablet"
 
 -- Fade the tablet to 15% opacity when the cursor leaves it
-Config.TabletDimmer = true
+Config.TabletDimmer = false
 
 -- Block the NUI from auto-redirecting to /home after login
 Config.PreventAutoRedirect = true
@@ -57,7 +57,7 @@ Config.RequireOnDuty = false
 -- Pushes player GPS locations to the CAD livemap on a timer.
 -- Leave disabled if cde_lm is running (duplicate updates).
 Config.LocationTracking = {
-    Enabled         = true,         -- Master switch (off by default)
+    Enabled         = false,         -- Master switch (off by default)
 
     -- Duty status source: 'auto' (CDE_Duty > ESX > QBCore > CAD), 'cde_duty',
     -- 'esx', 'qbcore', or 'cad' (polls /api/fivem/unit-active, no duty script needed)
@@ -65,7 +65,7 @@ Config.LocationTracking = {
 
     Interval        = 10000,         -- ms between location pushes
     MinDistance     = 50.0,          -- GTA units; skip update if moved less
-    LEOOnly         = true,         -- only track LEO (police/sheriff) depts
+    LEOOnly         = false,         -- only track LEO (police/sheriff) depts
 
     -- For DutySource = 'cad': ms between active-unit checks against the CAD
     CADActiveCheckInterval = 30000,
@@ -98,13 +98,13 @@ Config.Command = "d"
 Config.AlternativeCommand = "duty"
 
 -- Show blips for on-duty players
-Config.ShowDutyBlips = false
+Config.ShowDutyBlips = true
 
 -- Enable 911 chat integration
 Config.Enable911Chat = true
 
 -- Enable paycheck system
-Config.EnablePaychecks = false
+Config.EnablePaychecks = true
 
 -- ========================================
 -- DEPARTMENT CONFIGURATIONS
@@ -413,7 +413,7 @@ Config.Advanced = {
 -- ========================================
 
 Config.Discord = {
-    Enabled = false, -- Set to true if you want Discord logs
+    Enabled = true, -- Set to true if you want Discord logs
 
 
     -- Time tracking settings
@@ -530,7 +530,7 @@ Config.IDCard = {
 
     -- Card renderer: 'template' (community-uploaded license template PNG),
     -- 'html' (classic card, uses CardStyle below), 'auto' (template, fallback to html)
-    LicenseMode = 'template',
+    LicenseMode = 'auto',
 
     -- Also output to chat/skybox
     ShowInChat = true,
@@ -635,7 +635,7 @@ Config.Notifications = {
 
 -- Capture an in-game mugshot on civilian select and upload it to the CAD
 -- as a fallback photo (never overwrites a photo uploaded via the CAD)
-Config.CaptureFiveMMugshot = true
+Config.CaptureFiveMMugshot = false
 
 -- =============================================================================
 -- DEBUG
@@ -748,7 +748,7 @@ Config.ALPR = {
     AlertFlags    = {},
 
     -- Speed-limit choices offered by the /alpr panel picker
-    SpeedOptions = { 25, 35, 45, 55, 65, 70, 80, 90, 100 },
+    SpeedOptions = { 25, 35, 45, 55, 65, 70, 80 },
 
     -- LEO alert on a camera hit: chat line, flashing map blip, sound
     Alerts = {
@@ -858,7 +858,7 @@ do
     }
 
     Config.Permissions = {
-        RestrictToJobs = false,
+        RestrictToJobs = true,
         AllowedJobs = { 'police','sheriff','statepolice','trooper','highway','ranger','marshal' },
         UseQBCore = false,
         UseESX    = false,
@@ -917,4 +917,64 @@ do
     Config.ToggleDutyOnShift       = true
 
     _G.ErsConfig = Config
+end
+
+-- ════════════════════════════════════════════════════════════════════
+-- PANIC BUTTON
+-- ════════════════════════════════════════════════════════════════════
+do
+    local Config
+Config = {}
+
+Config.Debug = false                     -- Print HTTP request/response debug info
+
+-- ═══════════════════════════════════════════════════════════════════
+-- COMMAND & KEYBIND
+-- ═══════════════════════════════════════════════════════════════════
+Config.Command       = 'panic'      -- Chat command (/panic)
+Config.KeybindKey    = 'Y'          -- Default key (players can rebind in FiveM settings)
+Config.KeybindLabel  = 'Panic Button'
+
+Config.CooldownSeconds     = 30     -- Cooldown between panic activations (per player)
+Config.BlipDurationSeconds = 60     -- How long the red blip/route shows
+
+-- ═══════════════════════════════════════════════════════════════════
+-- DUTY RESTRICTIONS
+-- ═══════════════════════════════════════════════════════════════════
+-- Only on-duty LEOs may activate the panic button, and only on-duty LEOs
+-- receive the panic blip/route/alert. Uses the bundle's own duty state
+-- (the duty module's IsOnDutyLEO / IsPlayerOnDutyLEO / GetOnDutyLEOUnits).
+Config.RequireOnDutyLEO   = true    -- Only on-duty LEOs can press panic
+Config.BroadcastToLEOOnly = true    -- Only on-duty LEOs receive the alert
+
+-- ═══════════════════════════════════════════════════════════════════
+-- AUTO 911 CALL
+-- ═══════════════════════════════════════════════════════════════════
+Config.Auto911          = true              -- Automatically create a 911 call on panic
+Config.Auto911CallType  = 'Officer Panic'   -- Call type shown in CAD
+Config.Auto911Caller    = 'SYSTEM - PANIC'  -- Caller name shown in CAD
+
+-- ═══════════════════════════════════════════════════════════════════
+-- BLIP SETTINGS
+-- ═══════════════════════════════════════════════════════════════════
+Config.BlipSprite   = 526   -- Blip icon (526 = skull / danger)
+Config.BlipColor    = 1     -- Red
+Config.BlipScale    = 1.5   -- Blip size on map
+Config.BlipFlashes  = true  -- Blip flashes on minimap
+Config.ShowRoute    = true  -- Draw GPS route to panicking officer
+
+-- ═══════════════════════════════════════════════════════════════════
+-- CHAT MESSAGES
+-- ═══════════════════════════════════════════════════════════════════
+Config.ChatEnabled = true
+Config.ChatColor   = { 255, 50, 50 }  -- Red text
+
+Config.Messages = {
+    activated = '^1[PANIC] ^0Officer ^3%s^0 has activated their panic button! Location: ^3%s',
+    cooldown  = '^1[PANIC] ^0You must wait %d seconds before using panic again.',
+    cleared   = '^1[PANIC] ^0Panic alert for ^3%s^0 has expired.',
+    notOnDuty = '^1[PANIC] ^0Only on-duty LEOs can use the panic button.',
+}
+
+    _G.PanicConfig = Config
 end
