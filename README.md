@@ -3,6 +3,24 @@
 Everything sensitive (API keys, backend URL, community ID, Discord webhooks) is set with server **convars** in `server.cfg`. The `.lua` config files in each resource hold only operational values (commands, departments, cooldowns, etc.) and are safe to ship to clients.
 
 ---
+## Modules included
+
+| Module | What it does |
+|---|---|
+| Tablet | In-game CAD tablet NUI (default keybind `[`) + call-details popup (`G`) |
+| Duty | `/d <dept>` on-duty, paychecks, department permissions, `/ts` |
+| Civilian | `/setciv`, `/myciv`, `/showid`, `/regveh`, `/bank` |
+| 911 | `/911 <message>` and `/a911 <message>` (anonymous) |
+| Panic | `/panic` officer-down alert (keybind `Y`), on-duty LEOs only, blip/route + optional auto-911 |
+| Wraith | Wraith ARS 2X plate-reader → CAD lookup |
+| ERS | Bridge for the Emergency Response Simulator |
+## Requirements
+
+- [ox_lib](https://github.com/overextended/ox_lib)
+- [oxmysql](https://github.com/overextended/oxmysql)
+- [nearest-postal](https://forum.cfx.re/t/release-nearest-postal-script/293511) (optional)
+- [wk_wars2x](https://github.com/WolfKnight98/wk_wars2x) (optional - Wraith module only)
+
 
 ## 1. The convars (server.cfg)
 
