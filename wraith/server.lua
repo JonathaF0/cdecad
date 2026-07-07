@@ -15,9 +15,6 @@ do
 --[[
     CDE Wraith ARS 2X Integration - Server
     Handles Wraith events and queries the CDECAD plate reader API.
-
-    Lock path = full live API lookup.
-    Scan path = local cache match only (zero API calls per scan).
     The flagged-plates cache is rebuilt on resource start and every 60 minutes.
 ]]
 
