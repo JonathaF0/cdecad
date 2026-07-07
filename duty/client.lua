@@ -526,8 +526,103 @@ RegisterCommand('togglepostal', function()
     DrawNotification(false, false)
 end, false)
 
-RegisterCommand('postal', function()
+-- Alias intentionally NOT /postal: that clashes with the nearest-postal
+-- resource's routing command on servers running both.
+RegisterCommand('cdepostal', function()
     ExecuteCommand("togglepostal")
+end, false)
+
+-- ========================================
+-- /p <postal> - GPS route to a postal code
+-- ========================================
+-- Reads postals.json straight from whichever postal resource is running,
+-- so it works even when that resource doesn't provide its own routing.
+
+local postalDb = nil       -- { CODE = { x = .., y = .. } }
+local postalRouteBlip = nil
+
+local function PostalNotify(msg)
+    SetNotificationTextEntry("STRING")
+    AddTextComponentString(msg)
+    DrawNotification(false, false)
+end
+
+local function LoadPostalDb()
+    if postalDb then return postalDb end
+    for _, res in ipairs({ 'nearest-postal', 'postal-code', 'postals' }) do
+        if GetResourceState(res) == 'started' then
+            local raw = LoadResourceFile(res, 'postals.json')
+            if raw then
+                local ok, data = pcall(json.decode, raw)
+                if ok and type(data) == 'table' then
+                    local map = {}
+                    for _, p in ipairs(data) do
+                        local code = tostring(p.code or p.postal or ''):upper()
+                        local x, y = tonumber(p.x), tonumber(p.y)
+                        if code ~= '' and x and y then map[code] = { x = x, y = y } end
+                    end
+                    if next(map) then
+                        postalDb = map
+                        return map
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function ClearPostalRoute(silent)
+    if postalRouteBlip then
+        RemoveBlip(postalRouteBlip)
+        postalRouteBlip = nil
+    end
+    if not silent then PostalNotify("~y~Postal route cleared") end
+end
+
+RegisterCommand('p', function(_, args)
+    local code = tostring(args[1] or ''):upper()
+    if code == '' or code == 'CLEAR' then
+        ClearPostalRoute(false)
+        return
+    end
+
+    local db = LoadPostalDb()
+    if not db then
+        PostalNotify("~r~No postal database found (is nearest-postal running?)")
+        return
+    end
+
+    local pt = db[code] or db[(code:gsub('^0+', ''))]
+    if not pt then
+        PostalNotify("~r~Postal ~w~" .. code .. "~r~ not found")
+        return
+    end
+
+    ClearPostalRoute(true)
+    postalRouteBlip = AddBlipForCoord(pt.x, pt.y, 0.0)
+    SetBlipSprite(postalRouteBlip, 162)
+    SetBlipColour(postalRouteBlip, 3)
+    SetBlipRoute(postalRouteBlip, true)
+    SetBlipRouteColour(postalRouteBlip, 3)
+    BeginTextCommandSetBlipName("STRING")
+    AddTextComponentString("Postal " .. code)
+    EndTextCommandSetBlipName(postalRouteBlip)
+    PostalNotify("~g~Routing to postal ~w~" .. code)
+
+    -- Auto-clear once the player arrives
+    Citizen.CreateThread(function()
+        local myBlip = postalRouteBlip
+        while postalRouteBlip == myBlip do
+            local pos = GetEntityCoords(PlayerPedId())
+            if #(vector2(pos.x, pos.y) - vector2(pt.x, pt.y)) < 60.0 then
+                ClearPostalRoute(true)
+                PostalNotify("~g~Arrived at postal ~w~" .. code)
+                break
+            end
+            Citizen.Wait(2000)
+        end
+    end)
 end, false)
 
 -- ========================================
@@ -690,7 +785,10 @@ Citizen.CreateThread(function()
     TriggerEvent('chat:addSuggestion', '/callouts', 'Toggle 911 in chat')
     
     TriggerEvent('chat:addSuggestion', '/togglepostal', 'Toggle postal codes')
-    TriggerEvent('chat:addSuggestion', '/postal', 'Toggle postal codes')
+    TriggerEvent('chat:addSuggestion', '/cdepostal', 'Toggle postal codes')
+    TriggerEvent('chat:addSuggestion', '/p', 'Set a GPS route to a postal code', {
+        { name = "postal", help = "postal code, or empty/clear to remove the route" }
+    })
     
     TriggerEvent('chat:addSuggestion', '/loadout', 'Change loadout', {
         { name = "type", help = "swat/standard" }
