@@ -11,27 +11,15 @@ do
     end
     Config.API_KEY      = GetConvar('CDE_CAD_API_KEY', '')
     Config.COMMUNITY_ID = GetConvar('CDE_CAD_COMMUNITY_ID', '')
---[[
-    CDECAD Civilian Manager - Server Script
-    Handles API calls, persistence, and data management
-]]
 
--- Store active civilians per player (source -> civilian data)
 local ActiveCivilians = {}
 
--- Global accessor so sibling modules in this resource (fingerprint scanner)
--- can resolve which civilian a player is currently playing as. Server scripts
--- of one resource share a Lua environment; ActiveCivilians itself stays local.
 function CDECAD_GetActiveCivilian(src)
     return ActiveCivilians[src]
 end
 
--- Cache community settings (fetched once on startup)
 local CommunitySettings = nil
 
--- =============================================================================
--- UTILITY FUNCTIONS
--- =============================================================================
 
 local function Debug(...)
     if Config.Debug then
@@ -39,7 +27,6 @@ local function Debug(...)
     end
 end
 
--- Get player's Discord ID
 local function GetDiscordId(source)
     local identifiers = GetPlayerIdentifiers(source)
     for _, id in ipairs(identifiers) do
@@ -50,7 +37,6 @@ local function GetDiscordId(source)
     return nil
 end
 
--- Get player's license (for KVP key)
 local function GetLicense(source)
     local identifiers = GetPlayerIdentifiers(source)
     for _, id in ipairs(identifiers) do
@@ -61,11 +47,7 @@ local function GetLicense(source)
     return nil
 end
 
--- =============================================================================
--- API FUNCTIONS
--- =============================================================================
 
--- Make API request to CDECAD
 local function APIRequest(method, endpoint, data, callback)
     local url = Config.API_URL .. endpoint
     
@@ -95,17 +77,14 @@ local function APIRequest(method, endpoint, data, callback)
     end, method, data and json.encode(data) or '', headers)
 end
 
--- Get all civilians for a Discord ID
 local function GetCiviliansForDiscord(discordId, callback)
     APIRequest('GET', '/civilian/fivem-civilians-by-discord/' .. discordId .. '?communityId=' .. Config.COMMUNITY_ID, nil, callback)
 end
 
--- Get civilian by SSN (citizenid)
 local function GetCivilianBySSN(ssn, callback)
     APIRequest('GET', '/civilian/fivem-civilian/' .. ssn .. '?communityId=' .. Config.COMMUNITY_ID, nil, callback)
 end
 
--- Register a vehicle
 local function RegisterVehicle(civilianId, vehicleData, callback)
     local payload = {
         plate = vehicleData.plate,
@@ -120,7 +99,6 @@ local function RegisterVehicle(civilianId, vehicleData, callback)
     APIRequest('POST', '/civilian/fivem-register-vehicle', payload, callback)
 end
 
--- Build community settings from local config (no API call needed)
 local function FetchCommunitySettings(callback)
     CommunitySettings = {
         communityName = 'Unknown',
@@ -134,11 +112,7 @@ local function FetchCommunitySettings(callback)
     if callback then callback(CommunitySettings) end
 end
 
--- =============================================================================
--- PERSISTENCE FUNCTIONS
--- =============================================================================
 
--- Save selected civilian (server-side for MySQL, or tell client for KVP)
 local function SaveSelectedCivilian(source, civilianId)
     if Config.Persistence == 'mysql' then
         local discordId = GetDiscordId(source)
@@ -154,12 +128,10 @@ local function SaveSelectedCivilian(source, civilianId)
             Debug('Saved civilian to MySQL:', discordId, civilianId)
         end
     else
-        -- KVP is handled client-side, just acknowledge
         Debug('KVP persistence handled client-side')
     end
 end
 
--- Load selected civilian from MySQL
 local function LoadSelectedCivilian(source, callback)
     if Config.Persistence == 'mysql' then
         local discordId = GetDiscordId(source)
@@ -175,22 +147,16 @@ local function LoadSelectedCivilian(source, callback)
             callback(nil)
         end
     else
-        -- KVP is handled client-side
         callback(nil)
     end
 end
 
--- =============================================================================
--- CALLBACKS
--- =============================================================================
 
--- Get community settings
 lib.callback.register('cdecad-civmanager:getCommunitySettings', function(source)
     if CommunitySettings then
         return CommunitySettings
     end
     
-    -- If not cached yet, fetch synchronously
     local result = nil
     local completed = false
     
@@ -206,7 +172,6 @@ lib.callback.register('cdecad-civmanager:getCommunitySettings', function(source)
     return result
 end)
 
--- Get civilians for player
 lib.callback.register('cdecad-civmanager:getCivilians', function(source)
     local discordId = GetDiscordId(source)
     
@@ -250,7 +215,6 @@ lib.callback.register('cdecad-civmanager:getMugshot', function(source, ssn)
     return result
 end)
 
--- Get specific civilian data
 lib.callback.register('cdecad-civmanager:getCivilian', function(source, civilianId)
     local result = nil
     local completed = false
@@ -271,7 +235,6 @@ lib.callback.register('cdecad-civmanager:getCivilian', function(source, civilian
     return result
 end)
 
--- Load last selected civilian (MySQL only)
 lib.callback.register('cdecad-civmanager:loadLastCivilian', function(source)
     if Config.Persistence ~= 'mysql' then
         return nil
@@ -292,8 +255,7 @@ lib.callback.register('cdecad-civmanager:loadLastCivilian', function(source)
     return result
 end)
 
--- Register vehicle
-local vehicleRegCooldowns = {}  -- [source] = GetGameTimer()
+local vehicleRegCooldowns = {}
 lib.callback.register('cdecad-civmanager:registerVehicle', function(source, vehicleData)
     local activeCiv = ActiveCivilians[source]
 
@@ -301,18 +263,12 @@ lib.callback.register('cdecad-civmanager:registerVehicle', function(source, vehi
         return { success = false, error = 'No civilian selected. Use /setciv first.' }
     end
 
-    -- Server-side in-progress/spam guard. The client's IsRegisteringVehicle
-    -- flag is client-only, so a modded client can hammer this callback; each
-    -- one is an outbound CAD write. Floor at 3s between registrations per src.
     local nowT = GetGameTimer()
     if vehicleRegCooldowns[source] and (nowT - vehicleRegCooldowns[source]) < 3000 then
         return { success = false, error = 'Please wait before registering another vehicle.' }
     end
     vehicleRegCooldowns[source] = nowT
 
-    -- Sanitize the client-supplied vehicle fields before they reach the CAD.
-    -- vehicleData comes straight off lib.callback, so a modded client can send
-    -- wrong types or multi-MB strings. Coerce to trimmed strings with sane caps.
     if type(vehicleData) ~= 'table' then
         return { success = false, error = 'Invalid vehicle data.' }
     end
@@ -354,17 +310,7 @@ lib.callback.register('cdecad-civmanager:registerVehicle', function(source, vehi
     return result
 end)
 
--- =============================================================================
--- EVENT HANDLERS
--- =============================================================================
 
--- Verify a civilian (by ssn/id) is actually linked to the calling player's
--- account, so a modded client can't select someone else's civilian and then
--- act as them (bank spends, insurance, etc.). cb(owned) where owned is:
---   true  = confirmed owned
---   false = confirmed NOT owned (reject)
---   nil   = could not verify (API error) - callers may allow, to avoid
---           breaking legitimate /setciv during a transient CAD hiccup.
 local function VerifyCivilianOwnership(source, ssn, cb)
     local discordId = GetDiscordId(source)
     if not discordId or not ssn or ssn == '' then
@@ -373,7 +319,7 @@ local function VerifyCivilianOwnership(source, ssn, cb)
     end
     GetCiviliansForDiscord(discordId, function(success, data)
         if not success or type(data) ~= 'table' then
-            cb(nil)   -- couldn't verify
+            cb(nil)
             return
         end
         for _, civ in ipairs(data) do
@@ -383,11 +329,10 @@ local function VerifyCivilianOwnership(source, ssn, cb)
                 return
             end
         end
-        cb(false)     -- definitively not one of the caller's civilians
+        cb(false)
     end)
 end
 
--- Player selects a civilian
 RegisterNetEvent('cdecad-civmanager:selectCivilian', function(civilianData)
     local source = source
 
@@ -397,15 +342,10 @@ RegisterNetEvent('cdecad-civmanager:selectCivilian', function(civilianData)
         return
     end
 
-    -- Shape check. Note this does NOT verify the civilian belongs to the
-    -- caller - the client could still submit any civilian record they
-    -- like. Until the flow is restructured to send an ssn only and have
-    -- the server re-fetch the record, treat ActiveCivilians as untrusted
-    -- and re-validate before granting any privileges.
     if type(civilianData) ~= 'table' then return end
     local maxKeys = 0
     for _ in pairs(civilianData) do maxKeys = maxKeys + 1 end
-    if maxKeys > 40 then return end   -- guard against oversized payloads
+    if maxKeys > 40 then return end
 
     local stored = {}
     for k, v in pairs(civilianData) do
@@ -413,21 +353,14 @@ RegisterNetEvent('cdecad-civmanager:selectCivilian', function(civilianData)
     end
     if stored.mugshotUrl then
         local url = stored.mugshotUrl
-        -- Base64 data is very long and never starts with http
         if #url > 500 or not (string.sub(url, 1, 4) == 'http') then
             stored.mugshotUrl = nil
         end
     end
-    -- If the civilian has no SSN in the DB, fall back to the MongoDB id so the
-    -- identifier is preserved across the network (avoids "SSN: Unknown" in chat).
     if not stored.ssn and (stored.id or stored._id) then
         stored.ssn = tostring(stored.id or stored._id)
     end
 
-    -- Ownership gate: only store the civilian once we've confirmed (or
-    -- couldn't disprove) that it belongs to this player. A confirmed
-    -- not-owned selection is rejected - this is what stops a modded client
-    -- from acting as (and spending the money of) another player's civilian.
     VerifyCivilianOwnership(source, stored.ssn, function(owned)
         if owned == false then
             Debug('Rejected unowned civilian select for source:', source, 'ssn:', stored.ssn)
@@ -435,24 +368,18 @@ RegisterNetEvent('cdecad-civmanager:selectCivilian', function(civilianData)
                 'That civilian is not linked to your account.')
             return
         end
-        -- owned == true (verified) or nil (API hiccup - allow so legitimate
-        -- /setciv keeps working; the exploit path requires a healthy API to
-        -- return someone else's civ, which the true/false branch blocks).
 
         ActiveCivilians[source] = stored
         Debug('Set civilian for source:', source)
         Debug('  Name:', civilianData.firstName, civilianData.lastName)
         Debug('  SSN:', stored.ssn)
 
-        -- Save to persistence
         SaveSelectedCivilian(source, stored.ssn or stored.id)
 
-        -- Confirm back to client (client already shows its own notification)
         TriggerClientEvent('cdecad-civmanager:civilianSet', source, stored)
     end)
 end)
 
--- Player shows ID to nearby players
 local showIDCooldowns = {}
 RegisterNetEvent('cdecad-civmanager:showID', function()
     local source = source
@@ -468,14 +395,9 @@ RegisterNetEvent('cdecad-civmanager:showID', function()
 
     Debug('ShowID triggered for source:', source, 'Civilian:', activeCiv.firstName, activeCiv.lastName)
 
-    -- Send activeCiv WITHOUT mugshot - the net event must stay small to avoid
-    -- FiveM's ~64 KB event limit. Each client's NUI fetches the photo directly
-    -- from the CAD API via PerformHttpRequest (see client/nui.lua getMugshot).
-    -- Get player position
     local playerPed = GetPlayerPed(source)
     local playerCoords = GetEntityCoords(playerPed)
 
-    -- Build style with community settings
     local cardStyle = {
         StateName = 'San Andreas',
         CardTitle = "DRIVER'S LICENSE",
@@ -488,7 +410,6 @@ RegisterNetEvent('cdecad-civmanager:showID', function()
         end
     end
 
-    -- Find nearby players
     local players = GetPlayers()
     for _, playerId in ipairs(players) do
         local targetId = tonumber(playerId)
@@ -503,14 +424,10 @@ RegisterNetEvent('cdecad-civmanager:showID', function()
         end
     end
 
-    -- Also show to the player themselves
     TriggerClientEvent('cdecad-civmanager:receiveID', source, activeCiv, 'You', cardStyle)
 end)
 
--- Player disconnected
--- Per-source cooldown tables declared before playerDropped so its cleanup
--- captures them as upvalues (a later `local` would resolve to a nil global).
-local requestIDCooldowns = {}  -- [source] = GetGameTimer(); used by requestID below
+local requestIDCooldowns = {}
 
 AddEventHandler('playerDropped', function(reason)
     local source = source
@@ -520,11 +437,7 @@ AddEventHandler('playerDropped', function(reason)
     Debug('Player dropped, cleared civilian for source:', source)
 end)
 
--- =============================================================================
--- OX_TARGET EVENTS
--- =============================================================================
 
--- Show ID to a specific player (from ox_target)
 RegisterNetEvent('cdecad-civmanager:showIDToPlayer', function(targetId)
     local source = source
     targetId = tonumber(targetId)
@@ -550,22 +463,17 @@ RegisterNetEvent('cdecad-civmanager:showIDToPlayer', function(targetId)
         end
     end
 
-    -- Avoid sending the event twice to the same player (e.g. solo testing with ox_target)
     if targetId ~= source then
         TriggerClientEvent('cdecad-civmanager:receiveID', targetId, activeCiv, GetPlayerName(source), cardStyle)
     end
     TriggerClientEvent('cdecad-civmanager:receiveID', source, activeCiv, 'You', cardStyle)
 end)
 
--- Request ID from another player
 RegisterNetEvent('cdecad-civmanager:requestID', function(targetId)
     local source = source
     targetId = tonumber(targetId)
     if not targetId or targetId <= 0 or not GetPlayerName(targetId) then return end
 
-    -- Cooldown: idRequested pops a blocking alertDialog on the TARGET. Without
-    -- a throttle a modded client can spam this at a victim, burying them in
-    -- confirm modals (focus-stealing grief). One request per 3s per requester.
     local nowT = GetGameTimer()
     if requestIDCooldowns[source] and (nowT - requestIDCooldowns[source]) < 3000 then return end
     requestIDCooldowns[source] = nowT
@@ -574,9 +482,6 @@ RegisterNetEvent('cdecad-civmanager:requestID', function(targetId)
     TriggerClientEvent('cdecad-civmanager:idRequested', targetId, source, GetPlayerName(source))
 end)
 
--- =============================================================================
--- MUGSHOT UPDATE
--- =============================================================================
 
 RegisterNetEvent('cdecad-civmanager:updateMugshot', function(civilianId, mugshotBase64)
     local source = source
@@ -585,11 +490,6 @@ RegisterNetEvent('cdecad-civmanager:updateMugshot', function(civilianId, mugshot
     if type(mugshotBase64) ~= 'string' or #mugshotBase64 > 5 * 1024 * 1024 then return end
     if not mugshotBase64:match('^data:image/') then return end
 
-    -- The client sends whichever identifier the backend PUT route keys on,
-    -- which is the SSN (/civilian/fivem-update-character/:ssn). Accept a match
-    -- against the active civ's ssn OR its Mongo _id/id so the ownership check
-    -- doesn't reject the very identifier the update needs (this was rejecting
-    -- every SSN-based mugshot with "does not match caller's active civ").
     local active = ActiveCivilians[source]
     local matches = active and (
         tostring(active._id or active.id) == civilianId
@@ -611,13 +511,6 @@ RegisterNetEvent('cdecad-civmanager:updateMugshot', function(civilianId, mugshot
         end)
 end)
 
--- Fetch just the mugshotUrl for a civilian by SSN.
--- NOTE: this registration intentionally OVERRIDES the earlier
--- 'cdecad-civmanager:getMugshot' (lib.callback.register keeps the last
--- registration for a name). The NUI consumer reads `result.mugshotUrl`, so we
--- must return a TABLE, not a bare string - the old `return result` (a string)
--- made `result.mugshotUrl` nil on the NUI side, so the ID-card photo never
--- loaded via this path.
 lib.callback.register('cdecad-civmanager:getMugshot', function(source, ssn)
     local mugshotUrl = nil
     local completed = false
@@ -634,11 +527,6 @@ lib.callback.register('cdecad-civmanager:getMugshot', function(source, ssn)
     return { mugshotUrl = mugshotUrl }
 end)
 
--- Fetch a server-rendered license PNG. The CAD endpoint returns JSON
--- `{ ok, dataUri }` (PNG already base64-encoded server-side) so this
--- proxy never touches raw binary - PerformHttpRequest's UTF-8 handling
--- can mangle image bytes, and ox_lib has no built-in base64 encoder.
--- We just forward the JSON to the NUI, which drops dataUri into <img>.
 lib.callback.register('cdecad-civmanager:fetchLicensePng', function(source, civilianId, licenseType)
     if not civilianId or civilianId == '' or not licenseType or licenseType == '' then
         return { ok = false, status = 400 }
@@ -666,9 +554,6 @@ lib.callback.register('cdecad-civmanager:fetchLicensePng', function(source, civi
         ['Accept']    = 'application/json',
     })
 
-    -- Bounded wait so a stalled HTTP response doesn't pin a Lua thread
-    -- forever. 10s is more than enough for the cached path (microseconds)
-    -- and the cold path (a single sharp+SVG render).
     local waited = 0
     while not completed and waited < 10000 do
         Wait(50); waited = waited + 50
@@ -677,26 +562,15 @@ lib.callback.register('cdecad-civmanager:fetchLicensePng', function(source, civi
     return result
 end)
 
--- =============================================================================
--- EXPORTS
--- =============================================================================
 
--- Get a player's active civilian
 exports('GetActiveCivilian', function(source)
     return ActiveCivilians[source]
 end)
 
--- Check if player has a civilian selected
 exports('HasActiveCivilian', function(source)
     return ActiveCivilians[source] ~= nil
 end)
 
--- Set a player's active civilian by SSN/citizenid, server-side, with the same
--- ownership scope as /setciv - the lookup only returns civilians linked to the
--- caller's account, so a player can never be auto-set to someone else's civ.
--- Lets integrations (e.g. the QBCore sync) auto-select the civilian matching
--- the character the player just loaded, so /setciv isn't needed manually.
--- cb(success, err) is optional.
 exports('SetActiveCivilianBySSN', function(source, ssn, cb)
     ssn = ssn ~= nil and tostring(ssn) or ''
     if not source or ssn == '' then
@@ -732,9 +606,6 @@ exports('SetActiveCivilianBySSN', function(source, ssn, cb)
     return true
 end)
 
--- =============================================================================
--- MYSQL SETUP (if using MySQL persistence)
--- =============================================================================
 
 if Config.Persistence == 'mysql' then
     MySQL.ready(function()
@@ -750,14 +621,10 @@ if Config.Persistence == 'mysql' then
     end)
 end
 
--- =============================================================================
--- STARTUP
--- =============================================================================
 
 CreateThread(function()
     Wait(2000)
     
-    -- Fetch community settings on startup
     FetchCommunitySettings(function(settings)
         if settings then
             print('[CDECAD-CIVMANAGER] Community settings loaded - State: ' .. (settings.jurisdiction and settings.jurisdiction.state or 'San Andreas'))
