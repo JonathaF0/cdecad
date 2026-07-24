@@ -6,17 +6,23 @@ do
 
 -- ═══════════════════════════════════════════════════════════════════
 -- ALPR CAMERAS - SERVER
--- Owns the placed-camera list (persisted in resource KVP), keeps a
--- flagged-plate cache pulled from the CAD, and turns a flagged plate
--- seen by a camera into an auto-911 call via /api/fivem/911.
+-- Owns the placed-camera list (persisted in resource KVP so every player
+-- sees the same cameras), keeps a flagged-plate cache pulled from the CAD,
+-- and turns a flagged plate seen by a camera into an auto-911 call.
+--
+-- Built to mirror the local 911 system: same CAD endpoint (/api/fivem/911),
+-- same auth headers, same call shape - just fired by a camera instead of a
+-- player typing /911.
 -- ═══════════════════════════════════════════════════════════════════
 
-    -- Base CAD URL: trailing slash and /api stripped, full paths appended below
+    -- Base CAD URL (no trailing slash, no trailing /api). We append the full
+    -- '/api/...' path ourselves, so tolerate the convar being set either way
+    -- (wraith accepts a trailing /api; this keeps both forms working).
     local CadUrl = GetConvar('CDE_CAD_API_URL', ''):gsub('/$', ''):gsub('/[Aa][Pp][Ii]$', '')
     local ApiKey = GetConvar('CDE_CAD_API_KEY', '')
     local CommunityId = GetConvar('CDE_CAD_COMMUNITY_ID', '')
 
--- ─── Helpers ─────────────────────────────────────────────────────────
+-- ─── Helpers (self-contained: same as the 911 module) ───────────────
 
     local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     local function base64Encode(data)
@@ -50,17 +56,28 @@ do
         end
         local url  = CadUrl .. '/api/fivem/' .. endpoint
         local body = json.encode(payload)
+        local headers = {
+            ['Content-Type'] = 'application/json',
+            ['x-api-key']    = ApiKey,
+        }
+        -- x-payload is a base64 copy of the body so the CAD can recover it on
+        -- FXServer builds that drop the POST body (see server.js). But it must
+        -- NOT be attached to large payloads: the encoded copy would push the
+        -- request headers past the HTTP/Cloudflare header-size limit and the
+        -- whole request is rejected with a 400 (empty body) BEFORE it reaches
+        -- the route - which is what broke the full camera-list sync. Only send
+        -- the fallback for small bodies; large ones rely on the real body.
+        local encoded = base64Encode(body)
+        if #encoded <= 8000 then
+            headers['x-payload'] = encoded
+        end
         PerformHttpRequest(url, function(statusCode, response)
             local ok, data = pcall(json.decode, response or '')
             if cb then cb(statusCode, ok and data or nil) end
             if statusCode >= 400 then
                 print(('[cad-alpr] API error %d on /%s: %s'):format(statusCode, endpoint, response or 'no body'))
             end
-        end, 'POST', body, {
-            ['Content-Type'] = 'application/json',
-            ['x-api-key']    = ApiKey,
-            ['x-payload']    = base64Encode(body),
-        })
+        end, 'POST', body, headers)
     end
 
     local function CadGet(endpoint, cb)
@@ -74,14 +91,20 @@ do
         })
     end
 
+    -- Address the duty export by the RUNNING resource name, not the literal
+    -- 'CDECAD'. A server that renamed the resource folder would otherwise make
+    -- every pcall here fail and fall through to the `return true` branch,
+    -- silently turning every LEO-gated camera action (place/remove/clear/…)
+    -- into "anyone allowed". GetCurrentResourceName() matches the client side.
+    local RES = GetCurrentResourceName()
     local function IsOnDutyLEO(src)
         local ok, res = pcall(function()
-            return exports['CDECAD']:IsPlayerOnDutyLEO(src)
+            return exports[RES]:IsPlayerOnDutyLEO(src)
         end)
         if ok and res ~= nil then
             return res and true or false
         end
-        return true  -- duty module absent → don't hard-block
+        return true  -- duty module genuinely absent → don't hard-block
     end
 
 -- ─── Flagged-plate cache (pulled from the CAD, refreshed on a timer) ─
@@ -143,7 +166,21 @@ do
         local ok, data = pcall(json.decode, raw)
         if ok and type(data) == 'table' and type(data.cameras) == 'table' then
             cameras = data.cameras
-            nextId  = data.nextId or (#cameras + 1)
+            -- Prefer the persisted nextId; when it's missing (legacy blob) fall
+            -- back to max-existing-id + 1, NOT #cameras + 1. After removals
+            -- #cameras is smaller than the highest id, so the count-based guess
+            -- collides with a live camera and FindCamera then acts on the wrong
+            -- one (toggle/rename/remove hitting a duplicate id).
+            if tonumber(data.nextId) then
+                nextId = tonumber(data.nextId)
+            else
+                local maxId = 0
+                for _, c in ipairs(cameras) do
+                    local cid = tonumber(c.id) or 0
+                    if cid > maxId then maxId = cid end
+                end
+                nextId = maxId + 1
+            end
         end
     end
 
@@ -169,13 +206,49 @@ do
 
 -- ─── CAD sync: mirror the camera list into the CAD (web ALPR panel) ─
 
+    -- The web panel only ever sees what this sync pushes, and historically it
+    -- fired exactly twice: once ~3s after resource start and once per camera
+    -- mutation. A single failed POST (CAD mid-deploy, network blip, cold-start
+    -- 401 before convars land) meant the panel showed no cameras until the
+    -- next placement change or a resource restart - and the failure was only
+    -- visible with Debug on. Track failures and retry, plus a slow periodic
+    -- re-sync so the panel self-heals even if a success response got lost.
+    local camSyncFailed = false
+
     local function SyncCamerasToCad()
+        -- NEVER push an empty sync. The CAD sync is replace-all, so an empty
+        -- list would wipe the whole community's ALPR cameras. If we have zero
+        -- locally (fresh/empty KVP, load race), skip rather than risk destroying
+        -- the stored set. The backend guards this too, but defence in depth on a
+        -- data-loss path is worth it. Removing the last camera one-by-one leaves
+        -- a single stale CAD row until the next real placement - a trivial cost.
+        if #cameras == 0 then return end
         CadPost('alpr/cameras/sync', { cameras = cameras }, function(status)
             if status ~= 200 then
-                DebugLog('Camera sync to CAD failed: ' .. tostring(status))
+                camSyncFailed = true
+                print(('^3[cad-alpr] Camera sync to CAD failed (HTTP %s) - retrying in 60s. The web ALPR panel may show stale cameras until this succeeds.^7'):format(tostring(status)))
+            else
+                camSyncFailed = false
             end
         end)
     end
+
+    -- Retry failed syncs quickly; re-push the full list every 10 minutes
+    -- regardless as a self-healing backstop (replace-all semantics make the
+    -- periodic push idempotent and cheap - one request per cycle).
+    CreateThread(function()
+        local sinceFull = 0
+        while true do
+            Wait(60000)
+            sinceFull = sinceFull + 60
+            if camSyncFailed then
+                SyncCamerasToCad()
+            elseif sinceFull >= 600 then
+                sinceFull = 0
+                SyncCamerasToCad()
+            end
+        end
+    end)
 
     -- Persist + broadcast + CAD-sync after any camera mutation.
     local function CommitCameras()
@@ -193,7 +266,8 @@ do
         return nil
     end
 
-    -- Severity override: set from the in-game panel, persisted in KVP
+    -- Runtime severity level: starts from config, toggleable live from the
+    -- in-game panel, persisted in KVP so it survives restarts.
     local SEVERITY_KEY = 'cdecad_alpr_severity'
     local severityOverride = nil
 
@@ -210,8 +284,9 @@ do
         TriggerClientEvent('cdecad-alpr:meta', target or -1, { severity = CurrentSeverity() })
     end
 
-    -- AlertFlags allow-list wins when non-empty; otherwise the severity level
-    -- ('caution' = all flags, 'alert' = stolen/BOLO/warrant only)
+    -- Which flagged plates escalate. AlertFlags (keyword allow-list) wins
+    -- when non-empty; otherwise the current severity level ('caution' =
+    -- everything, 'alert' = stolen/BOLO/warrant tier only).
     local function PassesSeverity(hit)
         if type(ALPR.AlertFlags) == 'table' and #ALPR.AlertFlags > 0 then
             for _, f in ipairs(hit.flags or {}) do
@@ -228,7 +303,8 @@ do
         return true
     end
 
-    -- Alert on-duty LEOs; falls back to everyone if LEOOnly is off or the export fails
+    -- Direct alert to on-duty LEOs (falls back to everyone if the duty
+    -- module's export is unavailable or LEOOnly is off).
     local function AlertOfficers(payload)
         local A = ALPR.Alerts
         if not A or not A.Enabled then return end
@@ -246,12 +322,16 @@ do
         TriggerClientEvent('cdecad-alpr:hitAlert', -1, payload)
     end
 
-    -- Pick which client shoots the hit photo: nearest non-offender, LEOs first.
-    -- The offender's view never switches. Returns src, povAllowed
+    -- Pick which client shoots the hit photo. The flagged driver's screen
+    -- must NEVER switch views (it both disrupts them and metagame-reveals
+    -- the flag), so prefer the nearest OTHER player around the camera -
+    -- on-duty LEOs first. If the offender is the only client in range, they
+    -- capture from their own viewpoint with no camera change at all.
+    -- Returns: src, povAllowed.
     local function PickPhotoReporter(cam, plate, fallbackSrc)
         local camPos = vector3(cam.x, cam.y, cam.z)
 
-        -- Offender = player driving the flagged vehicle
+        -- Identify the offender: the player DRIVING the flagged vehicle.
         local offenderSrc = nil
         for _, pid in ipairs(GetPlayers()) do
             local src = tonumber(pid)
@@ -289,8 +369,10 @@ do
         return offenderSrc or fallbackSrc, false
     end
 
-    -- Record the hit on the CAD. A returned screenshot token gives a client a
-    -- single-use upload URL; clients never hold the API key
+    -- Record the hit on the CAD (powers the web panel's history/analytics).
+    -- When the CAD wants a screenshot it returns a single-use token; the
+    -- reporting CLIENT is told to upload its view there (clients never hold
+    -- the community API key - the token is the auth).
     local function RecordHit(cam, data, incidentNumber, reporterSrc)
         CadPost('alpr/hit', {
             camId       = cam.id,
@@ -320,7 +402,9 @@ do
                             main  = CadUrl .. '/api/alpr-upload/' .. res.screenshotToken,
                             plate = res.plateToken and (CadUrl .. '/api/alpr-upload/' .. res.plateToken) or nil,
                         },
-                        -- Camera info for the POV shot and overlay; os.date is server-only
+                        -- Camera info so the client can shoot from the unit's
+                        -- POV and burn a CCTV overlay. Timestamp comes from
+                        -- here - os.date isn't available client-side.
                         {
                             x = cam.x, y = cam.y, z = cam.z,
                             heading = cam.heading,
@@ -332,7 +416,8 @@ do
                         })
                 end
             elseif status == 201 then
-                -- Hit stored but no upload token returned
+                -- Hit stored but no upload token: either screenshots are off in
+                -- config, or the CAD backend predates the ALPR photo build.
                 print('[cad-alpr] Hit recorded but the CAD returned no screenshot token - redeploy the CAD backend (or screenshots are disabled).')
             else
                 print(('[cad-alpr] Hit record failed (status %s) - this hit will be missing from the web panel history.'):format(tostring(status)))
@@ -340,7 +425,8 @@ do
         end)
     end
 
-    -- Echo client photo outcomes to the server console
+    -- Client-side photo outcomes echoed here so the whole pipeline is
+    -- visible in ONE console (client F8 prints are easy to miss).
     RegisterNetEvent('cdecad-alpr:photoResult')
     AddEventHandler('cdecad-alpr:photoResult', function(result)
         local src = source
@@ -357,9 +443,23 @@ do
             TriggerClientEvent('chat:addMessage', src, { args = { '^1[ALPR]', 'Only on-duty LEOs can place cameras.' } })
             return
         end
-        if type(cam) ~= 'table' or not cam.x or not cam.y or not cam.z then return end
+        if type(cam) ~= 'table' then return end
+        -- Coords must be real numbers - a net event can send strings/tables,
+        -- and `cam.x + 0.0` on a non-number would error out the handler.
+        local cx, cy, cz = tonumber(cam.x), tonumber(cam.y), tonumber(cam.z)
+        if not cx or not cy or not cz then return end
 
-        -- Sanitize the requested prop against the allow-list; unknown/missing = default
+        -- Enforce the camera cap so a modded client can't loop-place cameras
+        -- to bloat the KVP store and the CAD sync payload.
+        local maxCams = tonumber(ALPR.MaxCameras) or 50
+        if #cameras >= maxCams then
+            TriggerClientEvent('chat:addMessage', src, { args = { '^1[ALPR]', ('Camera limit reached (%d). Remove one first.'):format(maxCams) } })
+            return
+        end
+
+        -- Sanitize the requested prop against the configured allow-list - a net
+        -- event can send any string, and we don't want a client spawning an
+        -- arbitrary model on everyone. Unknown / missing → the default.
         local propModel = (ALPR.Prop and ALPR.Prop.Model) or nil
         if cam.prop and ALPR.Prop and type(ALPR.Prop.Models) == 'table' then
             for _, m in ipairs(ALPR.Prop.Models) do
@@ -369,10 +469,10 @@ do
 
         local entry = {
             id       = nextId,
-            x        = cam.x + 0.0,
-            y        = cam.y + 0.0,
-            z        = cam.z + 0.0,
-            heading  = (cam.heading or 0.0) + 0.0,
+            x        = cx,
+            y        = cy,
+            z        = cz,
+            heading  = (tonumber(cam.heading) or 0.0) + 0.0,
             label    = tostring(cam.label or 'Unknown'),
             postal   = tostring(cam.postal or ''),
             prop     = propModel,
@@ -455,7 +555,9 @@ do
         })
     end)
 
-    -- Flip a camera 180°; prop, blip, and detection cone follow the stored heading
+    -- Flip a camera 180° - the "it's reading the wrong direction" fix.
+    -- Rotates the stored heading, so prop, blip, and detection cone all turn
+    -- together on the next sync.
     RegisterNetEvent('cdecad-alpr:flip')
     AddEventHandler('cdecad-alpr:flip', function(camId)
         local src = source
@@ -500,20 +602,25 @@ do
     AddEventHandler('cdecad-alpr:move', function(payload)
         local src = source
         if not LEOGate(src, 'move') then return end
-        if type(payload) ~= 'table' or not payload.id or not payload.x then return end
+        if type(payload) ~= 'table' or not payload.id then return end
+        -- Coords must be numbers - `payload.x + 0.0` on a string/table errors.
+        local nx, ny, nz = tonumber(payload.x), tonumber(payload.y), tonumber(payload.z)
+        if not nx or not ny or not nz then return end
         local cam = FindCamera(tonumber(payload.id))
         if not cam then
             TriggerClientEvent('chat:addMessage', src, { args = { '^1[ALPR]', 'No such camera.' } })
             return
         end
-        cam.x       = payload.x + 0.0
-        cam.y       = payload.y + 0.0
-        cam.z       = payload.z + 0.0
-        cam.heading = (payload.heading or cam.heading or 0.0) + 0.0
+        cam.x       = nx
+        cam.y       = ny
+        cam.z       = nz
+        cam.heading = (tonumber(payload.heading) or cam.heading or 0.0) + 0.0
         cam.label   = tostring(payload.label or cam.label or 'Unknown')
         cam.postal  = tostring(payload.postal or cam.postal or '')
-        -- Keep the existing prop unless a valid new one was picked
-        if payload.prop and type(ALPR.Prop.Models) == 'table' then
+        -- Keep the existing prop unless the mover picked a valid new one.
+        -- Guard ALPR.Prop itself (nil when Config.ALPR.Prop is unset), matching
+        -- the :place handler - otherwise the move handler errors on ALPR.Prop.Models.
+        if payload.prop and ALPR.Prop and type(ALPR.Prop.Models) == 'table' then
             for _, m in ipairs(ALPR.Prop.Models) do
                 if m == payload.prop then cam.prop = payload.prop break end
             end
@@ -524,7 +631,9 @@ do
         })
     end)
 
-    -- On-demand flagged-plate cache rebuild (LEO)
+    -- On-demand flagged-plate cache rebuild (LEO): the periodic refresh means
+    -- a vehicle marked stolen mid-shift keeps its OLD flags until the next
+    -- cycle - this closes that gap right after issuing a BOLO/stolen mark.
     RegisterNetEvent('cdecad-alpr:refresh')
     AddEventHandler('cdecad-alpr:refresh', function()
         local src = source
@@ -535,7 +644,7 @@ do
         })
     end)
 
-    -- Toggle the live severity filter from the in-game panel
+    -- Toggle the live severity filter from the in-game panel.
     RegisterNetEvent('cdecad-alpr:severity')
     AddEventHandler('cdecad-alpr:severity', function()
         local src = source
@@ -600,9 +709,12 @@ do
     RegisterNetEvent('cdecad-alpr:clear')
     AddEventHandler('cdecad-alpr:clear', function()
         local src = source
-        -- Clearing all cameras is an admin action
-        if src ~= 0 and not IsPlayerAceAllowed(src, 'command.alprcam') and not IsOnDutyLEO(src) then
-            TriggerClientEvent('chat:addMessage', src, { args = { '^1[ALPR]', 'Not permitted.' } })
+        -- Clearing ALL cameras is a genuinely destructive, community-wide
+        -- action, so it requires the ACE (server admin) - NOT just any on-duty
+        -- LEO. Individual place/remove stay LEO-gated; wiping everything does
+        -- not. src == 0 is the server console (/alprcam from txAdmin etc.).
+        if src ~= 0 and not IsPlayerAceAllowed(src, 'command.alprcam') then
+            TriggerClientEvent('chat:addMessage', src, { args = { '^1[ALPR]', 'Clearing all cameras requires server admin (ace command.alprcam).' } })
             return
         end
         local n = #cameras
@@ -624,16 +736,37 @@ do
     RegisterNetEvent('cdecad-alpr:plateSeen')
     AddEventHandler('cdecad-alpr:plateSeen', function(camId, plate, speedMph)
         local src = source
+        camId = tonumber(camId)
         local cleanPlate = NormalizePlate(plate)
         if cleanPlate == '' or not camId then return end
 
-        -- Server-authoritative camera lookup (coords, enabled, speed limit)
+        -- Server-authoritative camera lookup (coords, enabled, speed limit).
         local cam = FindCamera(camId)
         if not cam or cam.enabled == false then return end
 
+        -- Anti-forgery proximity gate. The legit client only reports plates it
+        -- physically scanned, which requires the reporting player to be within
+        -- ClientActiveRange of the (fixed) camera. Without this check, any
+        -- modded client could TriggerServerEvent('cdecad-alpr:plateSeen', id,
+        -- 'ANYPLATE', 9999) from anywhere on the map to fabricate a flagged /
+        -- speeding hit + auto-911 for a plate of their choosing. Verify the
+        -- caller's server-side ped position against the camera before trusting
+        -- the read. Generous margin (2x range) absorbs latency / desync.
+        local ped = GetPlayerPed(src)
+        if not ped or ped == 0 then return end
+        local pc = GetEntityCoords(ped)
+        local maxDist = (tonumber(ALPR.ClientActiveRange) or 200.0) * 2.0
+        local dx, dy = (cam.x or 0.0) - pc.x, (cam.y or 0.0) - pc.y
+        if (dx * dx + dy * dy) > (maxDist * maxDist) then
+            DebugLog(('plateSeen rejected: player %d is %.0fm from camera #%d (max %.0f)'):format(
+                src, math.sqrt(dx * dx + dy * dy), camId, maxDist))
+            return
+        end
+
         speedMph = tonumber(speedMph)
 
-        -- Classify the read: hotlist beats CAD flags beats speed
+        -- Classify the read. Hotlist beats CAD flags beats speed - a plate can
+        -- be several at once and we escalate the most specific.
         local kind, flags, alertLevel
         local hot = hotlist[cleanPlate]
         local hit = flaggedCache[cleanPlate]
@@ -652,7 +785,8 @@ do
             flags = { ('SPEEDING %d IN %d ZONE'):format(math.floor(speedMph), math.floor(cam.speedLimit)) }
             alertLevel = 'caution'
         else
-            -- Flagged but below the severity filter: log once per cooldown window
+            -- Flagged but below the severity bar: say so in the console once
+            -- per cooldown window, so "why didn't it fire" is answerable.
             if hit then
                 local fkey = 'f:' .. tostring(camId) .. ':' .. cleanPlate
                 local fnow = os.time()
@@ -662,10 +796,12 @@ do
                         cleanPlate, tostring(camId), table.concat(hit.flags or {}, ', '), CurrentSeverity(), ALPR.Command or 'alpr'))
                 end
             end
-            return -- clean or below the severity filter
+            return -- clean (or below the severity bar) → nothing to do
         end
 
-        -- One escalation per (camera, plate) per cooldown window; dedups across clients
+        -- One escalation per (camera, plate) inside the cooldown window.
+        -- Several clients can all see the same passing car; this dedup keeps
+        -- one plate from spawning a pile of duplicate calls.
         local key = tostring(camId) .. ':' .. cleanPlate
         local now = os.time()
         if callCooldown[key] and (now - callCooldown[key]) < ALPR.CallCooldownSeconds then
@@ -680,19 +816,19 @@ do
             kind:upper(), cleanPlate, camId, camName, flagStr
         ))
 
-        -- Bump the camera's hit counter (shown in the in-game panel)
+        -- Bump the camera's hit counter (shown in the in-game panel).
         cam.hits = (cam.hits or 0) + 1
         SaveCameras()
         BroadcastCameras()
 
-        -- Direct alert to on-duty LEOs: chat + flashing blip + sound
+        -- Direct alert to on-duty LEOs: chat + flashing blip + sound.
         AlertOfficers({
             camId = cam.id, cameraName = camName, plate = cleanPlate,
             kind = kind, flags = flags,
             x = cam.x, y = cam.y, z = cam.z,
         })
 
-        -- Auto-911, then record the hit on the CAD with the incident number
+        -- Auto-911, then record the hit on the CAD with the incident number.
         local callType, priority, description
         if kind == 'speed' then
             callType    = ALPR.SpeedCallType or 'ALPR Speed'
@@ -723,7 +859,8 @@ do
             if incidentNumber then
                 print(('[cad-alpr] Auto-911 created: %s'):format(incidentNumber))
             end
-            -- Record the hit regardless of 911 success
+            -- Record the hit regardless of 911 success so the panel history
+            -- is complete; the incident number links when the call landed.
             RecordHit(cam, hitData, incidentNumber, src)
         end)
     end)
@@ -787,8 +924,10 @@ do
         end
     end)
 
-    -- Apply queued camera edits from the CAD web panel every 30s, through the
-    -- same commit path as in-game edits
+    -- Apply camera edits made from the CAD web panel (enable/disable, speed
+    -- limit, rename). The panel queues commands; we consume the queue every
+    -- 30s and apply through the same commit path as in-game edits, which
+    -- syncs the applied state back to the CAD and every client.
     CreateThread(function()
         while true do
             Wait(30000)
