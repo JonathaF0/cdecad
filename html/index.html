@@ -9,13 +9,11 @@
 </head>
 <body>
   <script>
-    // Buffer messages that arrive before the tablet script registers.
     window.__nuiBuf = [];
     window.__nuiBufHandler = function (e) { window.__nuiBuf.push(e.data); };
     window.addEventListener('message', window.__nuiBufHandler);
   </script>
 
-  <!-- Tablet (top-level, same shape as standalone) -->
   <div id="tablet" class="tablet hidden">
     <div class="tablet-frame">
       <div class="tablet-header">
@@ -23,8 +21,35 @@
         <button id="closeTablet" class="tablet-close">&times;</button>
       </div>
       <iframe id="tabletFrame" class="tablet-iframe" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox" allow="clipboard-write"></iframe>
+      <div id="tabletOverlay" class="tablet-overlay hidden">
+        <div class="tablet-overlay-spinner"></div>
+        <div id="tabletOverlayText" class="tablet-overlay-text">Loading CDECAD…</div>
+        <button id="tabletOverlayRetry" class="tablet-overlay-retry hidden">Reload</button>
+      </div>
     </div>
   </div>
+
+  <style>
+    .tablet-overlay {
+      position: absolute; inset: 0; z-index: 5;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 14px; background: #0b0f1a; color: #cdd6f4;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    .tablet-overlay.hidden { display: none; }
+    .tablet-overlay-spinner {
+      width: 42px; height: 42px; border-radius: 50%;
+      border: 3px solid rgba(205,214,244,0.18); border-top-color: #3b82f6;
+      animation: tabletspin 0.9s linear infinite;
+    }
+    @keyframes tabletspin { to { transform: rotate(360deg); } }
+    .tablet-overlay-text { font-size: 14px; opacity: 0.85; }
+    .tablet-overlay-retry {
+      margin-top: 4px; padding: 8px 18px; font-size: 13px; cursor: pointer;
+      color: #fff; background: #3b82f6; border: none; border-radius: 8px;
+    }
+    .tablet-overlay-retry.hidden { display: none; }
+  </style>
 
   <div id="callPopup" class="call-popup hidden">
     <div class="popup-header">
@@ -43,8 +68,6 @@
   <script src="tablet/script.js"></script>
 
   <script>
-    // Lazy iframe factory for sub-NUIs.
-    // passiveZ orders passive frames among themselves (all below the tablet's 9999).
     function lazyIframe(src, passiveZ) {
       var f = null, loaded = false, pending = [];
       var PARENT = (typeof GetParentResourceName === 'function') ? GetParentResourceName() : 'CDECAD';
@@ -65,7 +88,6 @@
           });
           return f;
         },
-        // Queue until the iframe has loaded its listener, or the message is lost.
         post: function (d) {
           this.get();
           if (!loaded) { pending.push(d); return; }
@@ -73,13 +95,16 @@
         },
         size: function (state) {
           if (!f && state === 'closed') return;
+          this._state = state;
+          this._render();
+        },
+        _render: function () {
+          var state = window.__tabletOpen ? 'closed' : (this._state || 'closed');
+          if (!f && state === 'closed') return;
           var el = this.get();
           if (state === 'interactive') {
-            // Modal sub-UIs (e.g. the civ bank) sit above the tablet and take clicks.
             el.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;background:transparent;pointer-events:auto;z-index:11000;';
           } else if (state === 'passive') {
-            // Passive popups stay below the tablet (9999); a pointer-events:none
-            // iframe above it would block tablet clicks in CEF's hit-test.
             el.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;border:0;background:transparent;pointer-events:none;z-index:' + (passiveZ || 9990) + ';';
           } else {
             el.style.cssText = 'position:fixed;inset:0;width:0;height:0;border:0;background:transparent;pointer-events:none;';
@@ -89,13 +114,26 @@
     }
 
     var civ    = lazyIframe('civ/index.html');
-    var wraith = lazyIframe('wraith/index.html', 9993); // lock popup paints over the reader console
+    var wraith = lazyIframe('wraith/index.html', 9993);
     var reader = lazyIframe('reader/index.html', 9990);
+    var fprint = lazyIframe('fingerprint/index.html', 9991);
 
-    // Route messages by action name. 'keep' forwards without resizing.
-    var CIV_ACTIONS      = { showID: 'passive', openBank: 'interactive', openAdminBank: 'interactive', hideID: 'closed', closeBank: 'closed' };
+    var __overlays = [civ, wraith, reader, fprint];
+    function renderOverlays() { for (var i = 0; i < __overlays.length; i++) __overlays[i]._render(); }
+    (function () {
+      var tabletEl = document.getElementById('tablet');
+      if (!tabletEl || typeof MutationObserver === 'undefined') return;
+      window.__tabletOpen = !tabletEl.classList.contains('hidden');
+      new MutationObserver(function () {
+        var open = !tabletEl.classList.contains('hidden');
+        if (open !== window.__tabletOpen) { window.__tabletOpen = open; renderOverlays(); }
+      }).observe(tabletEl, { attributes: true, attributeFilter: ['class'] });
+    })();
+
+    var CIV_ACTIONS      = { showID: 'passive', hideID: 'closed' };
     var WRAITH_ACTIONS   = { showPlateResult: 'passive', hidePlateResult: 'closed' };
-    var READER_ACTIONS   = { readerShow: 'passive', readerHide: 'closed', readerScan: 'keep' };
+    var READER_ACTIONS   = { readerShow: 'passive', readerHide: 'closed', readerScan: 'keep', readerEdit: 'interactive', readerEditOff: 'passive' };
+    var FPRINT_ACTIONS   = { showFingerprint: 'passive', hideFingerprint: 'closed' };
 
     window.addEventListener('message', function (e) {
       var d = e.data || {};
@@ -110,10 +148,12 @@
         reader.post(d);
         var rs = READER_ACTIONS[d.action];
         if (rs !== 'keep') reader.size(rs);
+      } else if (FPRINT_ACTIONS[d.action] !== undefined) {
+        fprint.post(d);
+        fprint.size(FPRINT_ACTIONS[d.action]);
       }
     });
 
-    // Replay messages buffered before the handlers registered.
     (function () {
       window.removeEventListener('message', window.__nuiBufHandler);
       var buf = window.__nuiBuf || [];
