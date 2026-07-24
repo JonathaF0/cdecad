@@ -1,13 +1,9 @@
 do
     local Config = PanicConfig
--- ═══════════════════════════════════════════════════════════════════
--- CLIENT-SIDE PANIC BUTTON
--- ═══════════════════════════════════════════════════════════════════
 
-local activePanics = {}   -- { [serverId] = { blip, routeBlip, name, expires } }
+local activePanics = {}
 local lastPanicTime = 0
 
--- ─── Helpers ────────────────────────────────────────────────────
 
 local function GetStreetName(coords)
     local streetHash, crossHash = GetStreetNameAtCoord(coords.x, coords.y, coords.z)
@@ -23,10 +19,9 @@ local function GetPlayerNameSafe()
     return GetPlayerName(PlayerId()) or 'Unknown'
 end
 
--- local duty check for fast feedback; the server re-checks before broadcasting
 local function IsLocalOnDutyLEO()
     local ok, res = pcall(function()
-        return exports[GetCurrentResourceName()]:IsOnDutyLEO()
+        return exports['CDECAD']:IsOnDutyLEO()
     end)
     if ok and res ~= nil then
         return res and true or false
@@ -34,7 +29,6 @@ local function IsLocalOnDutyLEO()
     return true
 end
 
--- postal code from nearest-postal / postal-code, '' when unavailable
 local function GetNearestPostal(coords)
     local ok, result = pcall(function()
         return exports['nearest-postal']:getClosestPostal(coords)
@@ -59,7 +53,6 @@ local function GetNearestPostal(coords)
     return ''
 end
 
--- ─── Blip Management ────────────────────────────────────────────
 
 local function CreatePanicBlip(coords, playerName)
     local blip = AddBlipForCoord(coords.x, coords.y, coords.z)
@@ -97,7 +90,6 @@ local function RemovePanicBlip(data)
     end
 end
 
--- ─── Panic Activation (client requests server to broadcast) ─────
 
 local function ActivatePanic()
     if Config.RequireOnDutyLEO and not IsLocalOnDutyLEO() then
@@ -138,7 +130,6 @@ local function ActivatePanic()
     })
 end
 
--- ─── Register Command & Keybind ─────────────────────────────────
 
 RegisterCommand(Config.Command, function()
     ActivatePanic()
@@ -146,7 +137,6 @@ end, false)
 
 RegisterKeyMapping(Config.Command, Config.KeybindLabel, 'keyboard', Config.KeybindKey)
 
--- ─── Receive Panic Broadcasts from Server ───────────────────────
 
 RegisterNetEvent('cdecad-panic:broadcast')
 AddEventHandler('cdecad-panic:broadcast', function(data)
@@ -175,7 +165,6 @@ AddEventHandler('cdecad-panic:broadcast', function(data)
         })
     end
 
-    -- brief red screen flash
     AnimpostfxPlay('MP_OrbitalCannon', 0, false)
     Citizen.SetTimeout(200, function()
         AnimpostfxStop('MP_OrbitalCannon')
@@ -184,7 +173,6 @@ AddEventHandler('cdecad-panic:broadcast', function(data)
     PlaySoundFrontend(-1, 'TIMER_STOP', 'HUD_MINI_GAME_SOUNDSET', true)
 end)
 
--- ─── Tick: Expire Old Panics ────────────────────────────────────
 
 Citizen.CreateThread(function()
     while true do
