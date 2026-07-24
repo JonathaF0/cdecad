@@ -47,7 +47,10 @@ local function NearbyLivingPeds(coords, radius)
     return count
 end
 
--- Skip NPC reports for on-duty LEOs; checked live at send time via the duty export
+-- On-duty LEOs must never be NPC-reported (cops doing cop things - drawing a
+-- weapon, firing in a pursuit, etc. - were constantly getting 911'd on
+-- themselves). Check the duty module's export live at send time (same resource
+-- bundle), so it's accurate the instant they go on/off duty.
 local function IsLocalOnDutyLEO()
     local ok, res = pcall(function()
         return exports[GetCurrentResourceName()]:IsOnDutyLEO()
