@@ -1,13 +1,8 @@
 do
     local Config = Cad911Config
--- ═══════════════════════════════════════════════════════════════════
--- CLIENT-SIDE 911 CALLS
--- Gathers location, postal, and coordinates then sends to server
--- ═══════════════════════════════════════════════════════════════════
 
 local lastCallTime = 0
 
--- ─── Helpers ────────────────────────────────────────────────────
 
 local function GetStreetName(coords)
     local streetHash, crossHash = GetStreetNameAtCoord(coords.x, coords.y, coords.z)
@@ -28,9 +23,7 @@ local function GetZoneName(coords)
     return ''
 end
 
---- Try multiple popular postal resources, return postal code or empty string.
 local function GetNearestPostal(coords)
-    -- nearest-postal (most common)
     local ok, result = pcall(function()
         return exports['nearest-postal']:getClosestPostal(coords)
     end)
@@ -41,7 +34,6 @@ local function GetNearestPostal(coords)
         return tostring(result)
     end
 
-    -- nearest-postal alternate export
     ok, result = pcall(function()
         return exports['nearest-postal']:getPostal()
     end)
@@ -49,7 +41,6 @@ local function GetNearestPostal(coords)
         return tostring(result)
     end
 
-    -- postal-code / postal
     ok, result = pcall(function()
         return exports['postal-code']:getPostal(coords)
     end)
@@ -63,7 +54,6 @@ local function GetNearestPostal(coords)
     return ''
 end
 
--- ─── Build full location string ──────────────────────────────────
 
 local function GetLocationData()
     local ped    = PlayerPedId()
@@ -87,7 +77,6 @@ local function GetLocationData()
     }
 end
 
--- ─── Cooldown check ──────────────────────────────────────────────
 
 local function CheckCooldown()
     local now = GetGameTimer() / 1000
@@ -105,7 +94,6 @@ local function CheckCooldown()
     return true
 end
 
--- ─── /911 command ────────────────────────────────────────────────
 
 RegisterCommand(Config.Command911, function(source, args)
     local message = table.concat(args, ' ')
@@ -138,7 +126,6 @@ RegisterCommand(Config.Command911, function(source, args)
     end
 end, false)
 
--- ─── /a911 command (anonymous) ───────────────────────────────────
 
 RegisterCommand(Config.CommandAnon, function(source, args)
     local message = table.concat(args, ' ')
