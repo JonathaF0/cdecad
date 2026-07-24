@@ -4,8 +4,6 @@
 <meta charset="UTF-8">
 <title>CDE ALPR Reader</title>
 <style>
-    /* In-car mobile LPR console. Runs in a passive iframe
-       (pointer-events:none at the parent) so it never captures input. */
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { background: transparent; width: 100%; height: 100%; overflow: hidden;
         font-family: Tahoma, 'Segoe UI', Verdana, sans-serif; }
@@ -26,7 +24,6 @@
     }
     #console.on { display: flex; }
 
-    /* Window title bar */
     #title {
         display: flex; align-items: center;
         background: linear-gradient(180deg, #3b5876 0%, #24384e 100%);
@@ -44,7 +41,6 @@
         font-size: 9px; line-height: 12px; font-weight: 700;
     }
 
-    /* Menu strip */
     #menu {
         display: flex; gap: 14px;
         background: #1b2a3b; border-bottom: 1px solid #0a141f;
@@ -52,7 +48,6 @@
     }
     #menu .clock { margin-left: auto; font-family: 'Consolas', monospace; color: #b8c6d4; }
 
-    /* Camera feed panels */
     #cams { display: flex; gap: 1px; background: #0a141f; }
     .camBox { flex: 1; background: #10151b; }
     .camHdr {
@@ -71,14 +66,67 @@
         display: flex; align-items: center; justify-content: center;
         overflow: hidden;
     }
-    .camPlate {
-        background: #eef1f4;
-        border: 2px solid #202b38;
-        padding: 4px 10px;
-        font-family: 'Consolas', 'Courier New', monospace;
-        font-size: 19px; font-weight: 800; letter-spacing: 2px; color: #10161f;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    .usPlate {
+        display: flex; flex-direction: column; align-items: center;
+        width: 128px; height: 64px;
+        background: linear-gradient(180deg, #fdfdfa 0%, #e9ebe6 55%, #dfe2dc 100%);
+        border: 2px solid #9aa2ab;
+        border-radius: 7px;
+        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.7), 0 3px 10px rgba(0,0,0,0.65);
+        position: relative; overflow: hidden;
     }
+    .usPlate::before, .usPlate::after {
+        content: ''; position: absolute; top: 5px; width: 5px; height: 5px;
+        border-radius: 50%; background: #b9bfc6; box-shadow: inset 0 1px 1px rgba(0,0,0,0.45);
+    }
+    .usPlate::before { left: 10px; }
+    .usPlate::after  { right: 10px; }
+    .usState {
+        margin-top: 4px;
+        font-family: Georgia, 'Times New Roman', serif;
+        font-size: 9px; font-weight: 700; letter-spacing: 2.5px;
+        color: #1d3f8f; text-transform: uppercase;
+    }
+    .usNum {
+        flex: 1; display: flex; align-items: center;
+        font-family: 'Interstate', 'Arial Narrow', 'Consolas', sans-serif;
+        font-size: 24px; font-weight: 800; letter-spacing: 2px;
+        color: #23346c;
+        text-shadow: 0 1px 0 rgba(255,255,255,0.85), 0 -1px 0 rgba(0,0,0,0.25);
+    }
+    .customPlate {
+        position: relative; width: 128px; height: 64px;
+        border-radius: 5px; overflow: hidden;
+        border: 1px solid #9aa2ab;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.65);
+        background-size: 100% 100%;
+    }
+    .customPlate .cpNum {
+        position: absolute; transform: translate(-50%, -50%);
+        font-family: 'Interstate', 'Arial Narrow', 'Consolas', sans-serif;
+        font-weight: 800; letter-spacing: 2px; white-space: nowrap;
+    }
+
+    #ownerPanel {
+        display: none; gap: 8px; align-items: center;
+        padding: 6px 8px;
+        background: #16222f; border-bottom: 1px solid #0a141f;
+    }
+    #ownerPanel.on { display: flex; }
+    #ownerPanel img, #ownerPanel .noPhoto {
+        width: 44px; height: 52px; object-fit: cover;
+        border: 1px solid #4a5c70; background: #0e1721;
+    }
+    #ownerPanel .noPhoto {
+        display: flex; align-items: center; justify-content: center;
+        color: #46586a; font-size: 16px;
+    }
+    #ownerPanel .oInfo { flex: 1; min-width: 0; font-size: 10px; line-height: 1.5; }
+    #ownerPanel .oName { font-size: 11px; font-weight: 700; color: #e8f0f8; }
+    #ownerPanel .oBad  { color: #ff8d97; font-weight: 700; }
+    #ownerPanel .oWarn { color: #f0b840; font-weight: 700; }
+    #ownerPanel .oGood { color: #6fdc8c; }
+
     .camIdle { color: #46586a; font-size: 10px; letter-spacing: 2px; }
     .camTs {
         position: absolute; left: 5px; bottom: 4px;
@@ -86,7 +134,6 @@
         text-shadow: 0 1px 1px #000;
     }
 
-    /* Current-read status strip */
     #statusStrip {
         padding: 5px 8px;
         border-top: 1px solid #33465e; border-bottom: 1px solid #0a141f;
@@ -98,7 +145,6 @@
     #statusStrip.alert   { background: #47131a; color: #ff8d97; animation: flash 0.7s infinite; }
     @keyframes flash { 50% { background: #7a1622; color: #fff; } }
 
-    /* Read grid */
     #grid { border-collapse: collapse; width: 100%; table-layout: fixed; }
     #grid th {
         background: linear-gradient(180deg, #2c4258, #1d2d40);
@@ -120,9 +166,9 @@
     #grid tr.caution td.s { color: #f0b840; font-weight: 700; }
     #grid tr.clean td.s   { color: #6fdc8c; }
     #grid tr.unknown td.s { color: #7d93a8; }
+    #grid td.o .dlbad { color: #ff8d97; font-weight: 700; }
     #gridWrap { height: 176px; overflow: hidden; background: #121c28; }
 
-    /* Status bar */
     #sbar {
         display: flex;
         background: #1b2a3b; border-top: 1px solid #33465e;
@@ -136,6 +182,27 @@
     #sbar .al b { color: #ff8d97; }
     #sbar .link { margin-left: auto; border-right: none; }
     #sbar .dot { width: 7px; height: 7px; background: #67d27e; display: inline-block; }
+
+    #console.edit { outline: 2px dashed #f0b840; cursor: move; }
+    #console.edit #title { cursor: move; }
+    #editBar {
+        display: none; align-items: center; gap: 8px;
+        background: #3a2c10; border-top: 1px solid #f0b840;
+        padding: 5px 8px; font-size: 10px; color: #f0d9a0;
+    }
+    #console.edit #editBar { display: flex; }
+    #editBar button {
+        margin-left: auto; padding: 3px 14px;
+        background: linear-gradient(180deg, #5a6f84, #37485a);
+        border: 1px solid #0a141f; color: #fff;
+        font-size: 10px; font-weight: 700; cursor: pointer;
+    }
+    #rsHandle {
+        display: none; position: absolute; right: -7px; bottom: -7px;
+        width: 16px; height: 16px; background: #f0b840;
+        border: 2px solid #05090e; cursor: nwse-resize; z-index: 5;
+    }
+    #console.edit #rsHandle { display: block; }
 </style>
 </head>
 <body>
@@ -168,13 +235,20 @@
 
     <div id="statusStrip">STANDBY - WAITING FOR READS</div>
 
+    <div id="ownerPanel">
+        <img id="oPhoto" alt="" style="display:none">
+        <div class="noPhoto" id="oNoPhoto">?</div>
+        <div class="oInfo" id="oInfo"></div>
+    </div>
+
     <table id="grid">
         <thead>
             <tr>
-                <th style="width:46px">TIME</th>
-                <th style="width:46px">CAM</th>
-                <th>PLATE</th>
-                <th style="width:110px">STATUS</th>
+                <th style="width:40px">TIME</th>
+                <th style="width:38px">CAM</th>
+                <th style="width:78px">PLATE</th>
+                <th>OWNER</th>
+                <th style="width:96px">STATUS</th>
             </tr>
         </thead>
     </table>
@@ -186,6 +260,8 @@
         <div class="al">ALERTS <b id="vAlerts">0</b></div>
         <div class="link"><span class="dot"></span> CAD LINK</div>
     </div>
+    <div id="editBar">DRAG TITLE BAR TO MOVE &middot; CORNER TO RESIZE<button id="editDone">DONE</button></div>
+    <div id="rsHandle"></div>
 </div>
 
 <script>
@@ -194,7 +270,19 @@
     var reads = 0, hits = 0, alerts = 0;
     var elConsole = document.getElementById('console');
     var rowsEl = document.getElementById('rows');
-    var lastByPlate = {}; // plate -> { row, ts }
+    var lastByPlate = {};
+
+    var plateDesigns = {};
+    var designIdByPlate = {};
+
+    function normPlate(p) { return String(p || '').replace(/\s/g, '').toUpperCase(); }
+    function designFor(plate) {
+        var id = designIdByPlate[normPlate(plate)];
+        return id ? (plateDesigns[id] || null) : null;
+    }
+    function escHtml(v) {
+        return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    }
 
     setInterval(function () {
         var d = new Date();
@@ -210,7 +298,7 @@
             o.type = 'square'; o.frequency.value = freq; g.gain.value = 0.06;
             o.connect(g); g.connect(audioCtx.destination);
             o.start(); setTimeout(function () { o.stop(); }, ms);
-        } catch (e) { /* audio unavailable */ }
+        } catch (e) {  }
     }
 
     function statusOf(data) {
@@ -229,12 +317,62 @@
         var view = document.getElementById(cam === 'REAR' ? 'camRear' : 'camFront');
         var ts = document.getElementById(cam === 'REAR' ? 'tsRear' : 'tsFront');
         view.innerHTML = '';
-        var p = document.createElement('span');
-        p.className = 'camPlate';
-        p.textContent = plate;
+        var d = designFor(plate);
+        var p;
+        if (d && d.imageDataUri) {
+            p = document.createElement('span');
+            p.className = 'customPlate';
+            p.style.backgroundImage = 'url("' + d.imageDataUri + '")';
+            var cnum = document.createElement('span');
+            cnum.className = 'cpNum';
+            cnum.textContent = plate;
+            cnum.style.left = (d.textXPercent != null ? d.textXPercent : 50) + '%';
+            cnum.style.top = (d.textYPercent != null ? d.textYPercent : 60) + '%';
+            cnum.style.color = d.textColor || '#000';
+            cnum.style.fontSize = Math.round(64 * ((d.textSizePercent != null ? d.textSizePercent : 28) / 100)) + 'px';
+            p.appendChild(cnum);
+        } else {
+            p = document.createElement('span');
+            p.className = 'usPlate';
+            var st = document.createElement('span');
+            st.className = 'usState';
+            st.textContent = 'SAN ANDREAS';
+            var num = document.createElement('span');
+            num.className = 'usNum';
+            num.textContent = plate;
+            p.appendChild(st);
+            p.appendChild(num);
+        }
         view.appendChild(p);
         ts.textContent = time;
         view.appendChild(ts);
+    }
+
+    function updateOwnerPanel(o, plate) {
+        document.getElementById('ownerPanel').classList.add('on');
+        var img = document.getElementById('oPhoto');
+        var no = document.getElementById('oNoPhoto');
+        if (o.mugshotUrl) {
+            img.src = o.mugshotUrl;
+            img.style.display = '';
+            no.style.display = 'none';
+        } else {
+            img.style.display = 'none';
+            no.style.display = 'flex';
+        }
+        var dob = o.dateOfBirth ? new Date(o.dateOfBirth) : null;
+        var dobStr = (dob && !isNaN(dob.getTime()))
+            ? ((dob.getMonth() + 1) + '/' + dob.getDate() + '/' + dob.getFullYear()) : '';
+        var dlGood = String(o.licenseStatus || '').toLowerCase() === 'valid';
+        var bits = [];
+        if (dobStr) bits.push('DOB ' + dobStr);
+        bits.push('DL <span class="' + (dlGood ? 'oGood' : 'oWarn') + '">' + escHtml(o.licenseStatus || 'Unknown') + '</span>');
+        if (o.hasWarrants) bits.push('<span class="oBad">WARRANTS</span>');
+        if (o.isDangerous) bits.push('<span class="oBad">DANGEROUS</span>');
+        document.getElementById('oInfo').innerHTML =
+            '<div class="oName">' + escHtml(o.name || 'Unknown') +
+            ' <span style="color:#7d93a8;font-weight:400">- ' + escHtml(plate) + '</span></div>' +
+            '<div>' + bits.join(' &middot; ') + '</div>';
     }
 
     function onScan(msg) {
@@ -243,10 +381,20 @@
         var plate = data.plate || '???';
         var flags = (data.flags || []).join(', ');
         var cam = fmtCam(msg.cam);
+
+        if (data.plateDesign && data.plateDesign.imageDataUri) {
+            var inlineId = 'plate:' + normPlate(plate);
+            plateDesigns[inlineId] = data.plateDesign;
+            designIdByPlate[normPlate(plate)] = inlineId;
+        }
+
+        var ownerObj = (data.owner && typeof data.owner === 'object') ? data.owner : null;
+        var ownerName = ownerObj ? (ownerObj.name || '') : (data.owner || '');
+        var dlStatus = String(ownerObj ? (ownerObj.licenseStatus || '') : (data.dl || ''));
+        if (ownerObj) updateOwnerPanel(ownerObj, plate);
         var now = new Date();
         var t = ('0' + now.getHours()).slice(-2) + ':' + ('0' + now.getMinutes()).slice(-2) + ':' + ('0' + now.getSeconds()).slice(-2);
 
-        // Re-read of the same plate within 45s refreshes its row instead of stacking duplicates.
         var prev = lastByPlate[plate];
         var isRefresh = prev && (Date.now() - prev.ts) < 45000;
         if (isRefresh && prev.row && prev.row.parentNode) {
@@ -270,23 +418,111 @@
                 ? plate + ' - NOT ON FILE'
                 : plate + ' - ' + st.label + (flags ? ': ' + flags : '');
 
+        var esc = escHtml;
+        var owner = esc(ownerName);
+        var dl = dlStatus;
+        var dlBad = dl && dl !== 'Valid' && dl !== 'None';
+        var ownerCell = owner
+            ? owner + (dlBad ? ' <span class="dlbad">DL ' + esc(dl.toUpperCase()) + '</span>' : '')
+            : '<span style="color:#46586a">&mdash;</span>';
+
         var row = document.createElement('tr');
         row.className = st.cls;
         row.innerHTML =
-            '<td style="width:46px">' + t.slice(0, 5) + '</td>' +
-            '<td style="width:46px">' + cam + '</td>' +
-            '<td class="p">' + plate + '</td>' +
-            '<td class="s" style="width:110px" title="' + flags.replace(/"/g, '') + '">' + (flags || st.label) + '</td>';
+            '<td style="width:40px">' + t.slice(0, 5) + '</td>' +
+            '<td style="width:38px">' + cam + '</td>' +
+            '<td class="p" style="width:78px">' + esc(plate) + '</td>' +
+            '<td class="o" title="' + owner + (dl ? ' - DL ' + esc(dl) : '') + '">' + ownerCell + '</td>' +
+            '<td class="s" style="width:96px" title="' + esc(flags) + '">' + esc(flags || st.label) + '</td>';
         rowsEl.insertBefore(row, rowsEl.firstChild);
         lastByPlate[plate] = { row: row, ts: Date.now() };
         while (rowsEl.children.length > MAX_ROWS) rowsEl.removeChild(rowsEl.lastChild);
     }
 
+    var LKEY = 'cde-reader-layout';
+    var layout = null;
+    try { layout = JSON.parse(localStorage.getItem(LKEY) || 'null'); } catch (e) { layout = null; }
+
+    function applyLayout() {
+        if (!layout) return;
+        elConsole.style.right = 'auto';
+        elConsole.style.top = Math.max(0, layout.y || 0) + 'px';
+        elConsole.style.left = Math.max(0, layout.x || 0) + 'px';
+        elConsole.style.transform = 'scale(' + (layout.s || 1) + ')';
+        elConsole.style.transformOrigin = 'top left';
+    }
+    applyLayout();
+
+    function currentPos() {
+        var r = elConsole.getBoundingClientRect();
+        return { x: r.left, y: r.top, s: (layout && layout.s) || 1 };
+    }
+
+    var drag = null;
+    document.getElementById('title').addEventListener('mousedown', function (e) {
+        if (!elConsole.classList.contains('edit')) return;
+        var p = currentPos();
+        drag = { kind: 'move', sx: e.clientX, sy: e.clientY, x: p.x, y: p.y };
+        e.preventDefault();
+    });
+    document.getElementById('rsHandle').addEventListener('mousedown', function (e) {
+        var p = currentPos();
+        drag = { kind: 'size', sx: e.clientX, sy: e.clientY, x: p.x, y: p.y, s: p.s };
+        e.preventDefault();
+        e.stopPropagation();
+    });
+    window.addEventListener('mousemove', function (e) {
+        if (!drag) return;
+        if (drag.kind === 'move') {
+            layout = { x: drag.x + (e.clientX - drag.sx), y: drag.y + (e.clientY - drag.sy), s: (layout && layout.s) || 1 };
+        } else {
+            var s = Math.min(1.8, Math.max(0.55, drag.s * (1 + (e.clientX - drag.sx) / 400)));
+            layout = { x: drag.x, y: drag.y, s: s };
+        }
+        applyLayout();
+    });
+    window.addEventListener('mouseup', function () { drag = null; });
+
+    function finishEdit() {
+        elConsole.classList.remove('edit');
+        try { if (layout) localStorage.setItem(LKEY, JSON.stringify(layout)); } catch (e) {  }
+        var res = (location.hostname || '').replace(/^cfx-nui-/, '') || 'CDECAD';
+        try { fetch('https://' + res + '/readerEditDone', { method: 'POST', body: '{}' }); } catch (e) {  }
+    }
+    document.getElementById('editDone').addEventListener('click', finishEdit);
+    window.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && elConsole.classList.contains('edit')) finishEdit();
+    });
+
     window.addEventListener('message', function (e) {
         var d = e.data || {};
         if (d.action === 'readerScan') onScan(d);
-        else if (d.action === 'readerShow') elConsole.classList.add('on');
+        else if (d.action === 'readerDesigns') {
+            var newDesigns = d.designs || {};
+            var newByPlate = d.byPlate || {};
+            for (var pk in designIdByPlate) {
+                var idv = String(designIdByPlate[pk]);
+                if (idv.indexOf('plate:') === 0 && !newByPlate[pk]) {
+                    newByPlate[pk] = idv;
+                    newDesigns[idv] = plateDesigns[idv];
+                }
+            }
+            plateDesigns = newDesigns;
+            designIdByPlate = newByPlate;
+        }
+        else if (d.action === 'readerResetLayout') {
+            layout = null;
+            try { localStorage.removeItem(LKEY); } catch (err) {  }
+            elConsole.style.left = '';
+            elConsole.style.top = '';
+            elConsole.style.right = '';
+            elConsole.style.transform = '';
+            elConsole.style.transformOrigin = '';
+        }
+        else if (d.action === 'readerShow') { elConsole.classList.add('on'); applyLayout(); }
         else if (d.action === 'readerHide') elConsole.classList.remove('on');
+        else if (d.action === 'readerEdit') { elConsole.classList.add('on'); elConsole.classList.add('edit'); }
+        else if (d.action === 'readerEditOff') elConsole.classList.remove('edit');
     });
 })();
 </script>
