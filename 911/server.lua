@@ -1,7 +1,10 @@
 do
     local Config = Cad911Config
 
-    Config.CadUrl = GetConvar('CDE_CAD_API_URL', '')
+    -- Normalize like the civ/duty/alpr modules: strip a trailing slash (→ '//api',
+    -- which Express won't collapse, 404) and a trailing '/api' (some owners set
+    -- the convar that way; we append the full '/api/...' path ourselves).
+    Config.CadUrl = GetConvar('CDE_CAD_API_URL', ''):gsub('/$', ''):gsub('/[Aa][Pp][Ii]$', '')
     Config.ApiKey = GetConvar('CDE_CAD_API_KEY', '')
 -- ═══════════════════════════════════════════════════════════════════
 -- SERVER-SIDE 911 CALLS
@@ -62,6 +65,18 @@ local function GetPlayerNameSafe(src)
     return GetPlayerName(src) or ('Player ' .. src)
 end
 
+-- In-game notify: hand the call to the duty module, which pushes it to every
+-- on-duty LEO/Fire unit (chat + notification + sound + auto GPS route via
+-- CDE:Receive911). Same-resource server event, so this is a direct handoff.
+-- The legacy standalone pair (cde-duty-cad-911 → CDE_Duty) did this; the
+-- unified bundle only sent calls to the CAD, so in-game 911 alerts were
+-- silently lost. Fired independent of the CAD HTTP result on purpose:
+-- officers should still hear the call even if the CAD is briefly down.
+local function NotifyOnDutyUnits(callData)
+    if Config.NotifyOnDuty == false then return end
+    TriggerEvent('cad:forward911ToUnits', callData)
+end
+
 -- Caller's phone number: lb-phone when running, otherwise the active CAD
 -- civilian's registered number. nil when neither is available.
 local function GetCallerPhone(src)
@@ -94,11 +109,14 @@ AddEventHandler('cad-911:call', function(data)
         DebugLog(('Cooldown active for player %d, ignoring'):format(src))
         return
     end
-    cooldowns[src] = now
 
-    if not data or not data.message or data.message == '' then
+    if not data or type(data) ~= 'table' or type(data.message) ~= 'string' or data.message == '' then
         return
     end
+
+    -- Only start the cooldown once we know this is a real call - an empty /
+    -- malformed payload shouldn't burn the caller's window.
+    cooldowns[src] = now
 
     local playerName = GetPlayerNameSafe(src)
     local callerName = data.anon and Config.AnonCallerName or playerName
@@ -110,6 +128,16 @@ AddEventHandler('cad-911:call', function(data)
         data.anon and 'Anonymous' or '911',
         playerName, src, data.message, location
     ))
+
+    NotifyOnDutyUnits({
+        description = data.message,
+        message     = data.message,
+        location    = location,
+        coords      = coords,
+        caller      = callerName,
+        isAnonymous = data.anon == true,
+        isNPC       = false,
+    })
 
     CadRequest('911', {
         callType    = Config.DefaultCallType,
@@ -131,21 +159,51 @@ end)
 -- ─── NPC witness reports ───────────────────────────────────────
 
 local npcCooldowns = {}  -- per (reportType, 100m grid cell) → timestamp
+local npcPlayerCooldowns = {}  -- per source → timestamp (anti-spam floor)
 
 RegisterNetEvent('cad-911:npc')
 AddEventHandler('cad-911:npc', function(data)
+    local src = source
     if not data or type(data) ~= 'table' or not data.reportType or not data.callType then return end
-    if not data.coords or not data.coords.x or not data.coords.y then return end
+    -- Coords must be finite numbers. The grid-cell key below does
+    -- string.format('%d', math.floor(x/100)); a non-number, NaN, or inf makes
+    -- %d raise "number has no integer representation" and aborts the handler,
+    -- and a forged huge coord is meaningless anyway. Reject up front.
+    local cxRaw, cyRaw = tonumber(data.coords and data.coords.x), tonumber(data.coords and data.coords.y)
+    if not cxRaw or not cyRaw or cxRaw ~= cxRaw or cyRaw ~= cyRaw
+       or math.abs(cxRaw) > 1e7 or math.abs(cyRaw) > 1e7 then return end
+
+    local now = os.time()
+
+    -- Per-PLAYER floor: the grid+type key alone is forgeable (a modded client
+    -- varying reportType or coords makes every call a fresh key, so the 60s
+    -- area cooldown never bites). This hard per-source throttle bounds how
+    -- often ANY one client can drive NPC reports regardless of key.
+    if npcPlayerCooldowns[src] and (now - npcPlayerCooldowns[src]) < 10 then return end
+    npcPlayerCooldowns[src] = now
 
     -- Rate-limit per area+type so a single trigger doesn't spam the CAD.
     local key = string.format('%s:%d:%d',
-        data.reportType,
-        math.floor((data.coords.x or 0) / 100),
-        math.floor((data.coords.y or 0) / 100))
-    local now = os.time()
+        tostring(data.reportType),
+        math.floor(cxRaw / 100),
+        math.floor(cyRaw / 100))
     local cd  = 60
     if npcCooldowns[key] and (now - npcCooldowns[key]) < cd then return end
     npcCooldowns[key] = now
+
+    local npcDescription = data.metadata and type(data.metadata) == 'table'
+        and ('Plate ' .. tostring(data.metadata.plate or '?') ..
+             ' @ ' .. tostring(data.metadata.speed or '?') .. ' mph')
+        or nil
+
+    NotifyOnDutyUnits({
+        description = npcDescription or (data.callType or 'Witness report'),
+        location    = data.location or 'Unknown',
+        coords      = data.coords,
+        caller      = 'Anonymous Witness',
+        reportType  = data.reportType,
+        isNPC       = true,
+    })
 
     CadRequest('911', {
         callType    = data.callType,
@@ -153,10 +211,7 @@ AddEventHandler('cad-911:npc', function(data)
         location    = data.location or 'Unknown',
         postal      = data.postal,
         coordinates = data.coords,
-        description = data.metadata
-            and ('Plate ' .. tostring(data.metadata.plate or '?') ..
-                 ' @ ' .. tostring(data.metadata.speed or '?') .. ' mph')
-            or nil,
+        description = npcDescription,
         priority    = 'normal',
         source      = 'npc',
     }, function(status)
@@ -168,9 +223,26 @@ end)
 
 AddEventHandler('playerDropped', function()
     cooldowns[source] = nil
+    npcPlayerCooldowns[source] = nil
+end)
+
+-- npcCooldowns is keyed by area+type, not by player, so it can't be pruned on
+-- drop. Sweep entries older than the cooldown window periodically so a server
+-- that runs for weeks (or gets fed forged keys) doesn't grow the table without
+-- bound.
+Citizen.CreateThread(function()
+    while true do
+        Citizen.Wait(600000) -- every 10 min
+        local cutoff = os.time() - 120
+        for k, ts in pairs(npcCooldowns) do
+            if ts < cutoff then npcCooldowns[k] = nil end
+        end
+    end
 end)
 
 -- ─── Startup configuration check ───────────────────────────────
+-- Warn loudly if the resource starts without an API key. The most common
+-- "/911 doesn't work" cause is leaving Config.ApiKey blank.
 AddEventHandler('onResourceStart', function(resource)
     if resource ~= GetCurrentResourceName() then return end
     if not Config.ApiKey or Config.ApiKey == '' then
