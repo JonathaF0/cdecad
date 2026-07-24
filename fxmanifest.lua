@@ -2,9 +2,10 @@ fx_version 'cerulean'
 game 'gta5'
 
 name 'CDECAD'
-description 'CDECAD with SA lore departments (LSPD, LCSO, SASP, BCSO, LSFD, BCFD).'
-author 'CDE Inc'
-version '6.0.0'
+description 'CDECAD unified resource: tablet + duty + civ + 911 + wraith + ers'
+author 'CDECAD'
+version '8.0.0'
+
 lua54 'yes'
 
 shared_scripts {
@@ -17,27 +18,29 @@ server_scripts {
     'tablet/server_main.lua',
     'duty/server.lua',
     'duty/diagnostics.lua',
+    'panic/server.lua',
     '@oxmysql/lib/MySQL.lua',
     'civ/server_main.lua',
     '911/server.lua',
     '911/alpr_server.lua',
-    'panic/server.lua',
     'wraith/server.lua',
     'ers/server.lua',
+    'fingerprint/server.lua',
 }
 
 client_scripts {
     'tablet/client_main.lua',
     'duty/client.lua',
     'duty/diagnostics.lua',
+    'panic/client.lua',
     'civ/client_main.lua',
     'civ/client_nui.lua',
     '911/client.lua',
     '911/npc.lua',
     '911/alpr_client.lua',
-    'panic/client.lua',
     'wraith/client.lua',
     'ers/client.lua',
+    'fingerprint/client.lua',
 }
 
 ui_page 'html/index.html'
@@ -52,6 +55,7 @@ files {
     'html/civ/script.js',
     'html/wraith/index.html',
     'html/reader/index.html',
+    'html/fingerprint/index.html',
 }
 
 dependencies {
