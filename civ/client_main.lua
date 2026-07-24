@@ -1,17 +1,10 @@
 do
     local Config = CivConfig
---[[
-    CDECAD Civilian Manager - Client Script
-    Handles commands, UI, and local state
-]]
 
 local ActiveCivilian = nil
 local IsIDShowing = false
 local IsRegisteringVehicle = false
 
--- =============================================================================
--- UTILITY FUNCTIONS
--- =============================================================================
 
 local function Debug(...)
     if Config.Debug then
@@ -29,7 +22,6 @@ local function Notify(type, message)
             position = Config.Notifications.Position
         })
     else
-        -- Fallback to chat
         TriggerEvent('chat:addMessage', {
             color = type == 'success' and {0, 255, 0} or type == 'error' and {255, 0, 0} or {255, 255, 255},
             args = {'[CivManager]', message}
@@ -37,7 +29,6 @@ local function Notify(type, message)
     end
 end
 
--- Get current vehicle info
 local function GetCurrentVehicleInfo()
     local ped = PlayerPedId()
     local vehicle = GetVehiclePedIsIn(ped, false)
@@ -46,8 +37,6 @@ local function GetCurrentVehicleInfo()
         return nil
     end
 
-    -- Always strip whitespace - the backend normalizes plates the same way so
-    -- the same vehicle can't be registered twice with different spacing.
     local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     local modelHash = GetEntityModel(vehicle)
     local spawnName = GetDisplayNameFromVehicleModel(modelHash) or ''
@@ -61,13 +50,10 @@ local function GetCurrentVehicleInfo()
         model = model,
         make = make,
         color = color,
-        year = tostring(2020 + math.random(0, 5)) -- GTA doesn't expose a year; fake one
+        year = tostring(2020 + math.random(0, 5))
     }
 end
 
--- =============================================================================
--- KVP PERSISTENCE (Client-side)
--- =============================================================================
 
 local function SaveCivilianToKVP(civilianId)
     if Config.Persistence == 'kvp' then
@@ -94,12 +80,8 @@ local function ClearCivilianFromKVP()
     end
 end
 
--- =============================================================================
--- CIVILIAN SELECTOR UI
--- =============================================================================
 
 local function OpenCivilianSelector()
-    -- Fetch civilians from server
     local result = lib.callback.await('cdecad-civmanager:getCivilians', false)
     
     if not result.success then
@@ -114,11 +96,9 @@ local function OpenCivilianSelector()
     
     Debug('Received civilians:', json.encode(result.civilians))
     
-    -- Build options for ox_lib menu
     local options = {}
     
     for _, civ in ipairs(result.civilians) do
-        -- Handle different field name formats from API
         local firstName = civ.firstName or civ.firstname or civ.first_name or 'Unknown'
         local lastName = civ.lastName or civ.lastname or civ.last_name or 'Unknown'
         local dob = civ.dob or civ.dateOfBirth or civ.date_of_birth or civ.birthdate or 'Unknown'
@@ -131,7 +111,6 @@ local function OpenCivilianSelector()
             description = description .. ' | ID: ' .. tostring(ssn)
         end
         
-        -- Normalize the civilian data for storage
         local normalizedCiv = {
             id = civ.id or civ._id,
             firstName = firstName,
@@ -160,7 +139,6 @@ local function OpenCivilianSelector()
         })
     end
     
-    -- Add clear option
     table.insert(options, {
         title = 'Clear Selection',
         description = 'Remove current civilian selection',
@@ -179,14 +157,12 @@ local function OpenCivilianSelector()
     lib.showContext('cdecad_civ_selector')
 end
 
--- Capture and upload mugshot for the active civilian
 local function CaptureMugshotForCivilian(civilianId)
     if GetResourceState('MugShotBase64') ~= 'started' then
         Debug('MugShotBase64 not running, skipping mugshot capture')
         return
     end
 
-    -- Wait a moment so the ped is fully loaded before capturing
     SetTimeout(3000, function()
         local ok, result = pcall(function()
             return exports['MugShotBase64']:GetMugShotBase64(PlayerPedId(), true)
@@ -195,7 +171,6 @@ local function CaptureMugshotForCivilian(civilianId)
         if ok and result and result ~= '' then
             Debug('Mugshot captured for civilian:', civilianId)
             TriggerServerEvent('cdecad-civmanager:updateMugshot', civilianId, result)
-            -- Update local ActiveCivilian so the ID card shows it immediately this session
             if ActiveCivilian and (ActiveCivilian.id == civilianId or ActiveCivilian._id == civilianId or ActiveCivilian.ssn == civilianId) then
                 ActiveCivilian.mugshotUrl = result
             end
@@ -205,27 +180,21 @@ local function CaptureMugshotForCivilian(civilianId)
     end)
 end
 
--- Select a civilian
 function SelectCivilian(civData)
     Debug('SelectCivilian called with:', json.encode(civData))
 
-    -- Clear old civilian first
     ActiveCivilian = nil
 
-    -- Set new civilian
     ActiveCivilian = civData
 
-    -- Save to persistence
     local saveId = civData.ssn or civData.id
     Debug('Saving to KVP with ID:', saveId)
     SaveCivilianToKVP(saveId)
 
-    -- Notify server
     TriggerServerEvent('cdecad-civmanager:selectCivilian', civData)
 
     Notify('success', 'Now playing as: ' .. (civData.firstName or 'Unknown') .. ' ' .. (civData.lastName or 'Unknown'))
 
-    -- Capture and sync FiveM mugshot (disabled by default - CAD photo is source of truth)
     if Config.CaptureFiveMMugshot then
         local civId = civData.ssn or civData.id or civData._id
         if civId then
@@ -236,7 +205,6 @@ function SelectCivilian(civData)
     Debug('ActiveCivilian is now:', ActiveCivilian and (ActiveCivilian.firstName .. ' ' .. ActiveCivilian.lastName) or 'nil')
 end
 
--- Clear current civilian
 function ClearCivilian()
     Debug('ClearCivilian called')
     ActiveCivilian = nil
@@ -245,16 +213,11 @@ function ClearCivilian()
     Notify('success', 'Civilian selection cleared')
 end
 
--- =============================================================================
--- COMMANDS
--- =============================================================================
 
--- /setciv - Open civilian selector
 RegisterCommand(Config.Commands.SelectCiv, function()
     OpenCivilianSelector()
 end, false)
 
--- /myciv - Show current civilian info
 RegisterCommand(Config.Commands.ShowInfo, function()
     if not ActiveCivilian then
         Notify('error', 'No civilian selected. Use /' .. Config.Commands.SelectCiv)
@@ -271,30 +234,22 @@ RegisterCommand(Config.Commands.ShowInfo, function()
     Notify('info', info)
 end, false)
 
--- /showid - Show ID to nearby players
 RegisterCommand(Config.Commands.ShowID, function()
     if not ActiveCivilian then
         Notify('error', 'No civilian selected. Use /' .. Config.Commands.SelectCiv)
         return
     end
 
-    -- The NUI fetches the mugshot on-demand for everyone who views the card,
-    -- so no pre-fetch is needed here.
     TriggerServerEvent('cdecad-civmanager:showID')
 end, false)
 
--- Banking (/bank and /adminbank) was removed from the in-game resource -
--- accounts, transfers, loans and banker actions are all managed in the CAD.
 
--- /regveh - Register current vehicle
 RegisterCommand(Config.Commands.RegisterVehicle, function()
     if not Config.VehicleRegistration.Enabled then
         Notify('error', 'Vehicle registration is disabled')
         return
     end
 
-    -- Guard against the user spamming the command while a prior submission
-    -- is still awaiting a server response.
     if IsRegisteringVehicle then
         Notify('error', 'Registration already in progress')
         return
@@ -320,9 +275,6 @@ RegisterCommand(Config.Commands.RegisterVehicle, function()
         return
     end
 
-    -- Confirm registration. No fee line: registration billing (if any) is the
-    -- CAD's concern - this resource never charged anything, and advertising a
-    -- fee it doesn't collect just confused players.
     local confirm = lib.alertDialog({
         header = 'Register Vehicle',
         content = string.format('Register this vehicle?\n\n**Plate:** %s\n**Make:** %s\n**Model:** %s\n**Color:** %s',
@@ -355,21 +307,15 @@ RegisterCommand(Config.Commands.RegisterVehicle, function()
     end
 end, false)
 
--- /clearciv - Clear selected civilian
 RegisterCommand(Config.Commands.ClearCiv, function()
     ClearCivilian()
 end, false)
 
--- =============================================================================
--- EVENT HANDLERS
--- =============================================================================
 
--- Receive notification from server
 RegisterNetEvent('cdecad-civmanager:notify', function(type, message)
     Notify(type, message)
 end)
 
--- Civilian set confirmation from server
 RegisterNetEvent('cdecad-civmanager:civilianSet', function(civData)
     Debug('civilianSet event received from server')
     if civData then
@@ -381,7 +327,6 @@ RegisterNetEvent('cdecad-civmanager:civilianSet', function(civData)
     end
 end)
 
--- Format ISO date string (e.g. "1999-01-01T00:00:00.000Z") to MM/DD/YYYY
 local function FormatDOB(dob)
     if not dob then return 'Unknown' end
     local y, m, d = tostring(dob):match('(%d%d%d%d)-(%d%d)-(%d%d)')
@@ -389,17 +334,11 @@ local function FormatDOB(dob)
     return tostring(dob)
 end
 
--- Receive ID from another player
 RegisterNetEvent('cdecad-civmanager:receiveID', function(civData, fromName, cardStyle)
     Debug('Received ID from:', fromName)
 
     if Config.IDCard.ShowHTML then
-        -- Resolve render mode. Defaults to 'html' when the field is missing
-        -- so existing configs (pre-license-revamp) keep working unchanged.
         local mode = (Config.IDCard.LicenseMode or 'html'):lower()
-        -- We tell the NUI which mode + which civilian to render; the NUI
-        -- proxies the actual fetch through our resource server (so the
-        -- x-api-key never leaks into the browser) via /fetchLicensePng.
         local civId = civData.id or civData._id or ''
         SendNUIMessage({
             action      = 'showID',
@@ -407,9 +346,6 @@ RegisterNetEvent('cdecad-civmanager:receiveID', function(civData, fromName, card
             from        = fromName,
             duration    = Config.IDCard.DisplayDuration,
             style       = cardStyle or Config.IDCard.CardStyle,
-            -- 'template' → NUI MUST show the image; 'auto' → NUI tries the
-            -- image and silently falls back to the styled card on error;
-            -- 'html' → NUI renders the styled card as before.
             licenseMode = mode,
             civilianId  = civId,
             licenseType = 'drivers',
@@ -418,7 +354,6 @@ RegisterNetEvent('cdecad-civmanager:receiveID', function(civData, fromName, card
     end
     
     if Config.IDCard.ShowInChat then
-        -- Show in chat/skybox
         local idText = string.format('[ID SHOWN by %s] %s %s | DOB: %s | SSN: %s',
             fromName,
             civData.firstName or 'Unknown',
@@ -443,14 +378,12 @@ RegisterNetEvent('cdecad-civmanager:receiveID', function(civData, fromName, card
     end
 end)
 
--- Someone requested your ID
 RegisterNetEvent('cdecad-civmanager:idRequested', function(requesterId, requesterName)
     if not ActiveCivilian then
         Notify('info', requesterName .. ' requested your ID, but you have no civilian selected.')
         return
     end
     
-    -- Show a confirmation dialog
     local confirm = lib.alertDialog({
         header = 'ID Requested',
         content = '**' .. requesterName .. '** is requesting to see your ID.\n\nShow your ID to them?',
@@ -463,15 +396,10 @@ RegisterNetEvent('cdecad-civmanager:idRequested', function(requesterId, requeste
     end
 end)
 
--- =============================================================================
--- INITIALIZATION
--- =============================================================================
 
 CreateThread(function()
-    -- Wait a bit for everything to load
     Wait(3000)
     
-    -- Try to load last selected civilian
     local lastCivId = nil
     
     if Config.Persistence == 'kvp' then
@@ -483,7 +411,6 @@ CreateThread(function()
     if lastCivId then
         Debug('Found last civilian:', lastCivId)
         
-        -- Fetch the civilian data
         local result = lib.callback.await('cdecad-civmanager:getCivilian', false, lastCivId)
         
         if result.success and result.civilian then
@@ -497,9 +424,6 @@ CreateThread(function()
     end
 end)
 
--- =============================================================================
--- EXPORTS
--- =============================================================================
 
 exports('GetActiveCivilian', function()
     return ActiveCivilian
@@ -511,9 +435,6 @@ end)
 
 exports('OpenCivilianSelector', OpenCivilianSelector)
 
--- =============================================================================
--- CHAT SUGGESTIONS
--- =============================================================================
 
 TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.SelectCiv, 'Select a civilian from your CAD account')
 TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.ShowInfo, 'Show your current civilian info')
@@ -521,27 +442,20 @@ TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.ShowID, 'Show your ID 
 TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.RegisterVehicle, 'Register your current vehicle')
 TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.ClearCiv, 'Clear your civilian selection')
 
--- =============================================================================
--- OX_TARGET INTEGRATION
--- =============================================================================
 
 CreateThread(function()
-    -- Check if ox_target integration is enabled
     if not Config.IDCard.UseOxTarget then
         Debug('ox_target integration disabled in config')
         return
     end
     
-    -- Wait for ox_target to be ready
     Wait(2000)
     
-    -- Check if ox_target is available
     if GetResourceState('ox_target') ~= 'started' then
         Debug('ox_target not found, skipping target integration')
         return
     end
     
-    -- Add target option to players
     exports.ox_target:addGlobalPlayer({
         {
             name = 'cdecad_show_id',
@@ -554,7 +468,6 @@ CreateThread(function()
                     return
                 end
                 
-                -- Get the target player's server ID
                 local targetPed = data.entity
                 local targetPlayerId = NetworkGetPlayerIndexFromPed(targetPed)
                 local targetServerId = GetPlayerServerId(targetPlayerId)
@@ -562,7 +475,6 @@ CreateThread(function()
                 Debug('ox_target Show ID - targetPed:', targetPed, 'targetPlayerId:', targetPlayerId, 'targetServerId:', targetServerId)
                 
                 if targetServerId and targetServerId > 0 then
-                    -- Send ID to specific player via server
                     TriggerServerEvent('cdecad-civmanager:showIDToPlayer', targetServerId)
                     Notify('success', 'Showing ID to player')
                 else
