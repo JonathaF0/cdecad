@@ -2,37 +2,101 @@ do
     local Config = DutyConfig
 
     Config.CAD = Config.CAD or {}
-    Config.CAD.Url    = GetConvar('CDE_CAD_API_URL', '')
+    Config.CAD.Url    = GetConvar('CDE_CAD_API_URL', ''):gsub('/$', ''):gsub('/[Aa][Pp][Ii]$', '')
     Config.CAD.ApiKey = GetConvar('CDE_CAD_API_KEY', '')
     Config.Discord = Config.Discord or {}
     Config.Discord.DepartmentWebhooks = Config.Discord.DepartmentWebhooks or {}
     do
-        local function w(d) return GetConvar('CDE_CAD_WEBHOOK_' .. d, '') end
-        for _, d in ipairs({'SASP','LCSO','LSPD','BCSO','LSFD','BCFD'}) do
-            Config.Discord.DepartmentWebhooks[d:lower()] = w(d)
+        local codes = GetConvar('CDE_CAD_WEBHOOK_DEPTS', '')
+        for code in string.gmatch(codes, '([^,%s]+)') do
+            Config.Discord.DepartmentWebhooks[code:lower()] = GetConvar('CDE_CAD_WEBHOOK_' .. code:upper(), '')
         end
     end
     Config.Discord.Webhooks = Config.Discord.Webhooks or {}
     Config.Discord.Webhooks.Duty     = GetConvar('CDE_CAD_WEBHOOK_DUTY', '')
     Config.Discord.Webhooks.Paycheck = GetConvar('CDE_CAD_WEBHOOK_PAYCHECK', '')
--- CDE Duty System - Server
 
--- ========================================
--- INITIALIZE TABLES
--- ========================================
+    local function BuildDeptTable(list)
+        local out = {}
+        for _, d in ipairs(list or {}) do
+            if d.code and d.code ~= '' then
+                out[d.code] = {
+                    name       = d.name or d.code,
+                    type       = d.type or 'leo',
+                    color      = tonumber(d.blipColor) or 38,
+                    blipSprite = tonumber(d.blipSprite) or 60,
+                    paycheck   = tonumber(d.paycheck) or 1500,
+                    callSign   = d.callSign or '',
+                }
+            end
+        end
+        return out
+    end
+
+    local function PullDepartments(onDone)
+        if Config.CAD.Url == '' or Config.CAD.ApiKey == '' then
+            print('^3[CDE-DUTY] CAD url/key not set - using local Config.Departments fallback^0')
+            if onDone then onDone(false, 'CAD url/key not set') end
+            return
+        end
+        local url = Config.CAD.Url:gsub('/$', '') .. '/api/civilian/fivem-departments'
+        PerformHttpRequest(url, function(status, body)
+            if status ~= 200 or not body or body == '' then
+                print('^1[CDE-DUTY] Department pull failed (HTTP ' .. tostring(status) .. ') - using local fallback^0')
+                if onDone then onDone(false, 'HTTP ' .. tostring(status)) end
+                return
+            end
+            local ok, data = pcall(json.decode, body)
+            if not ok or type(data) ~= 'table' or type(data.departments) ~= 'table' or #data.departments == 0 then
+                print('^1[CDE-DUTY] Department pull returned no departments - using local fallback^0')
+                if onDone then onDone(false, 'no departments returned') end
+                return
+            end
+            Config.Departments = BuildDeptTable(data.departments)
+            print('^2[CDE-DUTY] Pulled ' .. tostring(#data.departments) .. ' departments from the CAD^0')
+            if onDone then onDone(true, #data.departments) end
+        end, 'GET', '', { ['x-api-key'] = Config.CAD.ApiKey, ['Content-Type'] = 'application/json' })
+    end
+
+    CreateThread(function()
+        PullDepartments()
+    end)
+
+    RegisterCommand('refreshdepts', function(source)
+        if source ~= 0 and not IsPlayerAceAllowed(source, 'command.refreshdepts') then
+            return
+        end
+        local function reply(msg, color)
+            if source == 0 then
+                print(msg)
+            else
+                TriggerClientEvent('chat:addMessage', source, {
+                    color = color or {255, 255, 0},
+                    args = {'[DUTY]', msg}
+                })
+            end
+        end
+        reply('Refreshing departments from the CAD…')
+        PullDepartments(function(ok, info)
+            if ok then
+                reply('Departments refreshed - ' .. tostring(info) .. ' loaded from the CAD.', {0, 255, 0})
+            else
+                reply('Department refresh failed (' .. tostring(info) .. ') - keeping current list.', {255, 0, 0})
+            end
+        end)
+    end, true)
+
 PlaytimeTracker = {}
 OnDutyUnits = {}
 OnDutyLEOUnits = {}
 OnDutyFireUnits = {}
 PlayerCalloutSettings = {}
 PlayerDepartments = {}
-PlayerPaycheckTimers = {} -- Track individual paycheck timers
+PlayerPaycheckTimers = {}
+PlayerPaycheckGen = {}
 
 print("^2[CDE-DUTY] Server loading...^0")
 
--- ========================================
--- UTILITY FUNCTIONS
--- ========================================
 
 function GetDiscordID(src)
     local ids = GetPlayerIdentifiers(src)
@@ -51,12 +115,6 @@ function FormatTime(seconds)
     return string.format("%02dh %02dm", hrs, mins)
 end
 
--- ========================================
--- CAD DUTY STATUS PUSH
--- ========================================
--- POST /api/ers/duty so the CAD flips the user's status to 10-8 / 10-42.
--- Backend is gated by Config.fivemSettings.ersAutoOnDuty and silently
--- no-ops if the community hasn't enabled it.
 
 local SERVICE_TYPE_BY_DEPT_TYPE = {
     leo  = 'police',
@@ -89,12 +147,6 @@ function PushDutyToCAD(source, onShift, deptType)
     })
 end
 
--- ========================================
--- CAD BACKEND SYNC (/api/fivem/cde-duty)
--- ========================================
--- Mirrors on/off-duty events to the CAD so the supervisor panel can show
--- in-game duty time alongside CAD duty time. No-ops silently if Config.CAD
--- isn't configured (test servers without a CAD stay quiet).
 
 function SendCdeDutyToCad(discordId, onShift, department, callSign, durationSec)
     if not Config or not Config.CAD then return end
@@ -124,9 +176,6 @@ function SendCdeDutyToCad(discordId, onShift, department, callSign, durationSec)
     })
 end
 
--- ========================================
--- WEBHOOK FUNCTION
--- ========================================
 
 function SendDutyWebhook(department, title, description, color)
     if not Config then return end
@@ -176,34 +225,70 @@ function SendDutyWebhook(department, title, description, color)
     }), { ['Content-Type'] = 'application/json' })
 end
 
--- ========================================
--- INDIVIDUAL PAYCHECK TIMER
--- ========================================
+function PayPlayerWage(playerId, amount, department, onDone)
+    local activeCiv = (CDECAD_GetActiveCivilian and CDECAD_GetActiveCivilian(playerId)) or nil
+    local civId = activeCiv and tostring(activeCiv._id or activeCiv.id or activeCiv.ssn or '') or ''
+    if civId == '' then
+        if onDone then onDone('nociv') end
+        return
+    end
+
+    local base = ((Config.CAD and Config.CAD.Url) or GetConvar('CDE_CAD_API_URL', '')):gsub('/$', '')
+    if base == '' then
+        if onDone then onDone('failed') end
+        return
+    end
+    if not base:find('/api$') then base = base .. '/api' end
+    local apiKey      = (Config.CAD and Config.CAD.ApiKey) or GetConvar('CDE_CAD_API_KEY', '')
+    local communityId = GetConvar('CDE_CAD_COMMUNITY_ID', '')
+
+    local discordId = GetDiscordID(playerId)
+    if discordId == 'Not Found' then discordId = nil end
+
+    local body = json.encode({
+        civilianId  = civId,
+        communityId = communityId,
+        amount      = amount,
+        department  = department,
+        discordId   = discordId,
+    })
+    PerformHttpRequest(base .. '/civilian/fivem-paycheck', function(status, resp)
+        if status < 200 or status >= 300 then
+            if onDone then onDone('failed') end
+            return
+        end
+        local ok, data = pcall(json.decode, resp)
+        if ok and type(data) == 'table' and data.ok then
+            if onDone then onDone('paid', tonumber(data.amount) or amount, tonumber(data.balance)) end
+        else
+            if onDone then onDone('failed') end
+        end
+    end, 'POST', body, { ['Content-Type'] = 'application/json', ['x-api-key'] = apiKey })
+end
+
 
 function StartPaycheckTimer(playerId, department)
     if not Config or not Config.Paychecks or not Config.Paychecks.Enabled then
         return
     end
     
-    -- Kill any existing timer for this player
-    if PlayerPaycheckTimers[playerId] then
-        PlayerPaycheckTimers[playerId] = nil
-    end
-    
-    -- Get paycheck amount
+    local gen = (PlayerPaycheckGen[playerId] or 0) + 1
+    PlayerPaycheckGen[playerId] = gen
+    PlayerPaycheckTimers[playerId] = true
+
     local amount = Config.Paychecks.OnDutyPay or 500
-    
+
     if department and Config.Departments[department] and Config.Departments[department].paycheck then
         amount = Config.Departments[department].paycheck
     end
-    
-    -- Schedule the next paycheck
-    local payInterval = (Config.Paychecks.Interval or 30) * 60000 -- Config value in minutes, convert to ms
-    
+
+    local payInterval = (Config.Paychecks.Interval or 30) * 60000
+
     print("^3[CDE-DUTY] Scheduled paycheck for " .. GetPlayerName(playerId) .. " in " .. (payInterval / 60000) .. " minutes ($" .. amount .. ")^0")
-    
-    PlayerPaycheckTimers[playerId] = SetTimeout(payInterval, function()
-        -- Check if player is still on duty
+
+    SetTimeout(payInterval, function()
+        if PlayerPaycheckGen[playerId] ~= gen then return end
+
         local stillOnDuty = false
         for _, unitId in ipairs(OnDutyUnits) do
             if unitId == playerId then
@@ -211,46 +296,57 @@ function StartPaycheckTimer(playerId, department)
                 break
             end
         end
-        
+
         if stillOnDuty and GetPlayerName(playerId) then
-            -- Add cash using pefcl export
-            local success = exports.pefcl:addCash(playerId, amount)
-            
-            if success then
-                TriggerClientEvent('chat:addMessage', playerId, {
-                    color = {0, 255, 0},
-                    args = {"[PAYCHECK]", "You received $" .. amount .. " (on duty for " .. (Config.Paychecks.Interval or 30) .. " mins)"}
-                })
-                
-                print("^2[CDE-DUTY] Paid " .. GetPlayerName(playerId) .. " $" .. amount .. "^0")
-                
-                -- Reschedule next paycheck
+            PayPlayerWage(playerId, amount, department, function(result, paidAmount, balance)
+                if PlayerPaycheckGen[playerId] ~= gen then return end
+
+                if result == 'paid' then
+                    local shown = paidAmount or amount
+                    TriggerClientEvent('chat:addMessage', playerId, {
+                        color = {0, 255, 0},
+                        args = {"[PAYCHECK]", "You received $" .. shown .. " (on duty for " .. (Config.Paychecks.Interval or 30) .. " mins)"}
+                    })
+                    TriggerClientEvent('CDE:ReceivePaycheck', playerId, shown, balance)
+                    print("^2[CDE-DUTY] Paid " .. GetPlayerName(playerId) .. " $" .. shown
+                        .. (balance and (" (civ balance $" .. balance .. ")") or "") .. "^0")
+                elseif result == 'nociv' then
+                    print("^3[CDE-DUTY] Paycheck skipped for " .. GetPlayerName(playerId)
+                        .. " - no civilian selected (/setciv)^0")
+                else
+                    print("^1[CDE-DUTY] Paycheck deposit failed for " .. GetPlayerName(playerId) .. " (CAD error)^0")
+                end
+
                 StartPaycheckTimer(playerId, PlayerDepartments[playerId])
-            else
-                print("^1[CDE-DUTY] Failed to pay " .. GetPlayerName(playerId) .. "^0")
-                -- Reschedule next paycheck anyway
-                StartPaycheckTimer(playerId, PlayerDepartments[playerId])
-            end
+            end)
         else
             print("^3[CDE-DUTY] Paycheck timer expired for player (went off duty or disconnected)^0")
         end
     end)
 end
 
--- ========================================
--- MAIN DUTY COMMAND
--- ========================================
+
+local function buildDeptUsage()
+    if not Config or not Config.Departments then
+        return "Usage: /d [department/off]"
+    end
+    local keys = {}
+    for k in pairs(Config.Departments) do keys[#keys + 1] = k end
+    table.sort(keys)
+    keys[#keys + 1] = "off"
+    return "Usage: /d [" .. table.concat(keys, "/") .. "]"
+end
 
 RegisterCommand("d", function(source, args, rawCommand)
     if source == 0 then return end
-    
+
     local type = args[1]
     local playerName = GetPlayerName(source)
-    
+
     if not type then
         TriggerClientEvent('chat:addMessage', source, {
             color = {255, 0, 0},
-            args = {"[DUTY]", "Usage: /d [sasp/lcso/lspd/bcso/lsfd/bcfd/off]"}
+            args = {"[DUTY]", buildDeptUsage()}
         })
         return
     end
@@ -258,7 +354,6 @@ RegisterCommand("d", function(source, args, rawCommand)
     type = string.lower(type)
     
     if type == "off" then
-        -- GO OFF DUTY
         local wasOnDuty = false
         local department = PlayerDepartments[source]
         
@@ -281,10 +376,10 @@ RegisterCommand("d", function(source, args, rawCommand)
             end
         end
         
-        -- Cancel pending paycheck
         if PlayerPaycheckTimers[source] then
             print("^3[CDE-DUTY] Cancelled pending paycheck for " .. playerName .. "^0")
             PlayerPaycheckTimers[source] = nil
+            PlayerPaycheckGen[source] = (PlayerPaycheckGen[source] or 0) + 1
         end
         
         if not wasOnDuty then
@@ -303,13 +398,10 @@ RegisterCommand("d", function(source, args, rawCommand)
         PlaytimeTracker[source] = nil
         local formattedTime = FormatTime(timePlayed)
         
-        -- Clear radio
         TriggerClientEvent("CDE:SetRadioAgency", source, nil)
         
-        -- Notify client off duty
         TriggerClientEvent("CDE:ConfirmOffDuty", source)
         
-        -- Update LEO status for 911 system
         TriggerClientEvent('CDE:SetLEOStatus', source, false)
         
         TriggerClientEvent('chat:addMessage', source, {
@@ -317,10 +409,9 @@ RegisterCommand("d", function(source, args, rawCommand)
             args = {"[DUTY]", "You are now OFF DUTY (Time: " .. formattedTime .. ")"}
         })
         
-        -- Send webhook
+        local discordId = GetDiscordID(source)
         if department and Config and Config.Departments and Config.Departments[department] then
             local deptInfo = Config.Departments[department]
-            local discordId = GetDiscordID(source)
             SendDutyWebhook(department,
                 "Officer Off Duty",
                 "**Officer:** " .. playerName .. "\n" ..
@@ -332,6 +423,9 @@ RegisterCommand("d", function(source, args, rawCommand)
             PushDutyToCAD(source, false, deptInfo.type)
             local cadDept = deptInfo.cadShortName or deptInfo.shortName or deptInfo.name or department
             SendCdeDutyToCad(discordId, false, cadDept, deptInfo.callSign, timePlayed)
+        elseif department then
+            PushDutyToCAD(source, false, nil)
+            SendCdeDutyToCad(discordId, false, department, nil, timePlayed)
         end
 
         PlayerDepartments[source] = nil
@@ -339,14 +433,21 @@ RegisterCommand("d", function(source, args, rawCommand)
         print("^1[CDE-DUTY] " .. playerName .. " went off duty after " .. formattedTime .. "^0")
         
     else
-        -- GO ON DUTY
         if not Config or not Config.Departments then
             print("^1[CDE-DUTY] Config not loaded!^0")
             return
         end
         
         local deptConfig = Config.Departments[type]
-        
+
+        if not deptConfig and Config.DutyTypes and Config.DutyTypes[type] then
+            local aliased = Config.DutyTypes[type]
+            if Config.Departments[aliased] then
+                type = aliased
+                deptConfig = Config.Departments[aliased]
+            end
+        end
+
         if not deptConfig then
             TriggerClientEvent('chat:addMessage', source, {
                 color = {255, 0, 0},
@@ -355,7 +456,6 @@ RegisterCommand("d", function(source, args, rawCommand)
             return
         end
         
-        -- Check if already on duty
         for _, unitId in ipairs(OnDutyUnits) do
             if unitId == source then
                 TriggerClientEvent('chat:addMessage', source, {
@@ -366,7 +466,6 @@ RegisterCommand("d", function(source, args, rawCommand)
             end
         end
         
-        -- Add to duty
         table.insert(OnDutyUnits, source)
         PlayerDepartments[source] = type
         
@@ -379,15 +478,12 @@ RegisterCommand("d", function(source, args, rawCommand)
         
         PlaytimeTracker[source] = os.time()
         
-        -- Start individual paycheck timer (30 mins from clock-in)
         StartPaycheckTimer(source, type)
         
-        -- Set radio - use lowercase department code (not callSign)
         local radioAgency = string.lower(type)
         TriggerClientEvent("CDE:SetRadioAgency", source, radioAgency)
         print("^2[CDE-DUTY] Setting radio agency to: " .. radioAgency .. "^0")
         
-        -- Send bodycam overlay event (not recording, just overlay)
         TriggerClientEvent("CDE:ConfirmOnDutyDepartment", source, type, deptConfig)
         
         TriggerClientEvent('chat:addMessage', source, {
@@ -395,7 +491,6 @@ RegisterCommand("d", function(source, args, rawCommand)
             args = {"[DUTY]", "You are now ON DUTY as " .. deptConfig.name}
         })
         
-        -- Send webhook
         local discordId = GetDiscordID(source)
         SendDutyWebhook(type,
             "Officer On Duty",
@@ -420,11 +515,6 @@ RegisterCommand("duty", function(source, args, rawCommand)
     ExecuteCommand("d " .. (args[1] or ""))
 end, false)
 
--- ========================================
--- TRAFFIC STOP (/ts) -> CAD BACKEND
--- ========================================
--- Forwards the client-side /ts command to /api/fivem/traffic-stop, which
--- creates a Traffic Stop call and auto-attaches the unit by Discord ID.
 
 local TS_B64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 local function TSBase64Encode(data)
@@ -442,8 +532,6 @@ end
 
 local trafficStopCooldowns = {}
 
--- Wraith ARS 2X fires `wk:onPlateLocked` as a server-side net event only;
--- mirror it back to the originating client so /ts can use the locked plate.
 RegisterNetEvent('wk:onPlateLocked')
 AddEventHandler('wk:onPlateLocked', function(cam, plate, index)
     local src = source
@@ -454,9 +542,8 @@ end)
 RegisterNetEvent('CDE:TrafficStop')
 AddEventHandler('CDE:TrafficStop', function(data)
     local src = source
-    if not data or not data.plate or data.plate == '' then return end
+    if not data or type(data) ~= 'table' or type(data.plate) ~= 'string' or data.plate == '' then return end
 
-    -- LEO-on-duty enforcement (server-authoritative)
     if not Config or not Config.TrafficStop or Config.TrafficStop.RequireLEO ~= false then
         local isLEO = false
         for _, unitId in ipairs(OnDutyLEOUnits) do
@@ -471,7 +558,6 @@ AddEventHandler('CDE:TrafficStop', function(data)
         end
     end
 
-    -- Cooldown
     local cd = (Config.TrafficStop and Config.TrafficStop.CooldownSeconds) or 5
     local now = os.time()
     if trafficStopCooldowns[src] and (now - trafficStopCooldowns[src]) < cd then
@@ -500,7 +586,6 @@ AddEventHandler('CDE:TrafficStop', function(data)
         return
     end
 
-    -- Resolve callSign from the player's current department
     local department = PlayerDepartments[src]
     local callSign
     if department and Config.Departments[department] then
@@ -568,11 +653,7 @@ AddEventHandler('playerDropped', function()
     trafficStopCooldowns[source] = nil
 end)
 
--- ========================================
--- 911 CALL FORWARDING
--- ========================================
 
--- Server-only event (no RegisterNetEvent); clients cannot trigger.
 AddEventHandler('cad:forward911ToUnits', function(callData)
     local totalUnits = #OnDutyLEOUnits + #OnDutyFireUnits
     
@@ -591,9 +672,38 @@ AddEventHandler('cad:forward911ToUnits', function(callData)
     end
 end)
 
--- ========================================
--- LEO STATUS CHECK FOR 911
--- ========================================
+RegisterNetEvent('CDE:RequestRoute911')
+AddEventHandler('CDE:RequestRoute911', function()
+    local src = source
+    if not Config or not Config.CAD or not Config.CAD.Url or Config.CAD.Url == ''
+       or not Config.CAD.ApiKey or Config.CAD.ApiKey == '' then
+        TriggerClientEvent('CDE:Route911Result', src, { success = false, reason = 'noconfig' })
+        return
+    end
+
+    local discordId = GetDiscordID(src)
+    if discordId == 'Not Found' then discordId = '' end
+
+    local url = Config.CAD.Url .. '/api/fivem/route-call?discordId=' .. discordId
+    PerformHttpRequest(url, function(statusCode, response)
+        local ok, parsed = pcall(json.decode, response or '')
+        if statusCode == 200 and ok and parsed and parsed.success
+           and parsed.call and parsed.call.coordinates then
+            local c = parsed.call.coordinates
+            if type(c.x) == 'number' and type(c.y) == 'number' then
+                TriggerClientEvent('CDE:Route911Result', src, {
+                    success  = true,
+                    coords   = { x = c.x, y = c.y, z = c.z or 0.0 },
+                    location = parsed.call.location,
+                    id       = parsed.call.id,
+                })
+                return
+            end
+        end
+        TriggerClientEvent('CDE:Route911Result', src, { success = false, reason = 'nocall' })
+    end, 'GET', '', { ['x-api-key'] = Config.CAD.ApiKey, ['Content-Type'] = 'application/json' })
+end)
+
 
 RegisterNetEvent('cad:requestLEOStatus')
 AddEventHandler('cad:requestLEOStatus', function()
@@ -610,11 +720,8 @@ AddEventHandler('cad:requestLEOStatus', function()
     TriggerClientEvent('CDE:SetLEOStatus', source, isLEO)
 end)
 
--- ========================================
--- CALLOUT TOGGLES
--- ========================================
 
-RegisterCommand("togglecallouts", function(source, args)
+RegisterCommand("dutycallouts", function(source, args)
     if source == 0 then return end
     
     if not PlayerCalloutSettings[source] then
@@ -635,12 +742,9 @@ end, false)
 
 RegisterCommand("callouts", function(source, args)
     if source == 0 then return end
-    ExecuteCommand("togglecallouts")
+    ExecuteCommand("dutycallouts")
 end, false)
 
--- ========================================
--- DUTY LIST
--- ========================================
 
 RegisterCommand("dutylist", function(source, args)
     local message = "=== ON-DUTY UNITS ===\n"
@@ -666,9 +770,6 @@ RegisterCommand("dutylist", function(source, args)
     end
 end, false)
 
--- ========================================
--- DISCONNECT HANDLER
--- ========================================
 
 AddEventHandler("playerDropped", function(reason)
     local serverId = source
@@ -699,15 +800,13 @@ AddEventHandler("playerDropped", function(reason)
         end
     end
     
-    -- Cancel pending paycheck
     if PlayerPaycheckTimers[serverId] then
         PlayerPaycheckTimers[serverId] = nil
     end
-    
+    PlayerPaycheckGen[serverId] = (PlayerPaycheckGen[serverId] or 0) + 1
+
     if wasOnDuty then
         print("^3[CDE-DUTY] " .. playerName .. " disconnected while on duty^0")
-        -- Snapshot identity and duty start before cleanup so the open
-        -- CAD-side duty session can be closed
         local discordId = GetDiscordID(serverId)
         local dutyStart = PlaytimeTracker[serverId]
         local timePlayed = dutyStart and (os.time() - dutyStart) or 0
@@ -719,7 +818,6 @@ AddEventHandler("playerDropped", function(reason)
             local cadCallSign = deptInfo.callSign
             SendCdeDutyToCad(discordId, false, cadDept, cadCallSign, timePlayed)
         else
-            -- Department config missing; still close the CAD-side session
             SendCdeDutyToCad(discordId, false, department, nil, timePlayed)
         end
     end
@@ -729,11 +827,6 @@ AddEventHandler("playerDropped", function(reason)
     PlaytimeTracker[serverId] = nil
 end)
 
--- ========================================
--- RESOURCE LIFECYCLE
--- ========================================
--- Close every open CAD duty session when this resource stops
--- (server shutdown, manual restart, etc.)
 AddEventHandler('onResourceStop', function(resourceName)
     if resourceName ~= GetCurrentResourceName() then return end
     print("^3[CDE-DUTY] Resource stopping , closing CAD duty sessions for " .. #OnDutyUnits .. " players^0")
@@ -753,9 +846,6 @@ AddEventHandler('onResourceStop', function(resourceName)
     end
 end)
 
--- ========================================
--- EXPORTS
--- ========================================
 
 exports('GetOnDutyUnits', function() return OnDutyUnits end)
 exports('GetOnDutyLEOUnits', function() return OnDutyLEOUnits end)
@@ -779,9 +869,6 @@ exports('IsPlayerOnDuty', function(playerId)
     return false
 end)
 
--- ========================================
--- STARTUP
--- ========================================
 
 Citizen.CreateThread(function()
     Citizen.Wait(1000)
@@ -799,7 +886,7 @@ Citizen.CreateThread(function()
     print("^2Commands:^0")
     print("  /d [dept/off] - Toggle duty")
     print("  /dutylist - Show on-duty units")
-    print("  /togglecallouts - Toggle 911 calls")
+    print("  /dutycallouts - Toggle 911 calls")
     print("^2Paycheck System:^0")
     print("  - Each player gets paid 30 mins after clocking in")
     print("  - Joe clocks in at 9:02 → gets paid at 9:32")
