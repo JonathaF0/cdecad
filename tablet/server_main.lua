@@ -6,9 +6,6 @@ do
     if Config.APIKey == '' or Config.CADEndpoint == '' then
         print('^1[CDECAD/TABLET] CDE_CAD_API_KEY / CDE_CAD_API_URL convar not set.^0')
     end
--- server/main.lua
--- CAD Tablet Server - Fetches assigned calls from CAD API for the popup
--- and (optionally) pushes player locations for the CAD livemap.
 
 local function debugLog(msg)
     if Config.EnableDebug then
@@ -16,7 +13,6 @@ local function debugLog(msg)
     end
 end
 
--- ─── Build API URL ───────────────────────────────────────────────────────────
 local function apiUrl(path)
     local base = Config.CADEndpoint
     if base:sub(-1) == '/' then base = base:sub(1, -2) end
@@ -31,7 +27,6 @@ local function getDiscordId(src)
     return nil
 end
 
--- ─── Fetch assigned calls for a player ───────────────────────────────────────
 RegisterNetEvent('cad-tablet:requestCalls')
 AddEventHandler('cad-tablet:requestCalls', function()
     local src = source
@@ -68,8 +63,6 @@ AddEventHandler('cad-tablet:requestCalls', function()
     })
 end)
 
--- ─── Optional: Location Tracking ─────────────────────────────────────────────
--- Pushes player coords + status to the CAD livemap when LocationTracking.Enabled.
 
 local function postJSON(url, payload, onDone)
     PerformHttpRequest(url, function(statusCode, body, headers)
@@ -80,7 +73,6 @@ local function postJSON(url, payload, onDone)
     })
 end
 
--- Relay a client's CAD active-state check to the backend and return the result.
 RegisterNetEvent('cad-tablet:checkCADActive')
 AddEventHandler('cad-tablet:checkCADActive', function()
     local src = source
@@ -108,8 +100,6 @@ AddEventHandler('cad-tablet:checkCADActive', function()
         })
 end)
 
--- Forward client coords to /api/dispatch/location-update; the backend
--- resolves the community from the API key.
 RegisterNetEvent('cad-tablet:pushLocation')
 AddEventHandler('cad-tablet:pushLocation', function(payload)
     local src = source
@@ -138,7 +128,6 @@ AddEventHandler('cad-tablet:pushLocation', function(payload)
     end)
 end)
 
--- Mark player offline on the livemap. Used on resource stop, drop, or off-duty.
 local function sendOffline(src, discordId, name)
     if not discordId then return end
     postJSON(apiUrl('/api/dispatch/location-update'), {
@@ -155,7 +144,6 @@ AddEventHandler('cad-tablet:sendOffline', function()
     sendOffline(src, getDiscordId(src), GetPlayerName(src))
 end)
 
--- Catch the client-disconnect case (the client thread can't run on drop).
 AddEventHandler('playerDropped', function(reason)
     if not Config.LocationTracking
        or not Config.LocationTracking.Enabled
@@ -164,7 +152,6 @@ AddEventHandler('playerDropped', function(reason)
     sendOffline(src, getDiscordId(src), GetPlayerName(src))
 end)
 
--- ─── Init ────────────────────────────────────────────────────────────────────
 AddEventHandler('onResourceStart', function(res)
     if GetCurrentResourceName() ~= res then return end
     print("^2[CAD-TABLET] Server initialized^0")
