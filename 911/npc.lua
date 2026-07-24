@@ -1,16 +1,9 @@
 do
     local Config = Cad911Config
 
--- ═══════════════════════════════════════════════════════════════════
--- NPC WITNESS REPORTS
--- Detects gunshots / fights / speed-camera triggers from the local
--- player and fires `cad-911:npc` to the server, which forwards to
--- the CAD as a witness 911.
--- ═══════════════════════════════════════════════════════════════════
 
 if not Config.NPCReports or not Config.NPCReports.Enabled then return end
 
--- ─── Shared helpers ─────────────────────────────────────────────────
 
 local function StreetName(coords)
     local s, c = GetStreetNameAtCoord(coords.x, coords.y, coords.z)
@@ -47,10 +40,6 @@ local function NearbyLivingPeds(coords, radius)
     return count
 end
 
--- On-duty LEOs must never be NPC-reported (cops doing cop things - drawing a
--- weapon, firing in a pursuit, etc. - were constantly getting 911'd on
--- themselves). Check the duty module's export live at send time (same resource
--- bundle), so it's accurate the instant they go on/off duty.
 local function IsLocalOnDutyLEO()
     local ok, res = pcall(function()
         return exports[GetCurrentResourceName()]:IsOnDutyLEO()
@@ -63,7 +52,6 @@ local function SendNPC(report)
     TriggerServerEvent('cad-911:npc', report)
 end
 
--- ─── Gunshots ───────────────────────────────────────────────────────
 
 local GunWeapons = {
     [`WEAPON_PISTOL`]=1, [`WEAPON_PISTOL_MK2`]=1, [`WEAPON_COMBATPISTOL`]=1,
@@ -116,7 +104,6 @@ if Config.NPCReports.Gunshots and Config.NPCReports.Gunshots.Enabled then
     end)
 end
 
--- ─── Fights ─────────────────────────────────────────────────────────
 
 if Config.NPCReports.Fights and Config.NPCReports.Fights.Enabled then
     local last = 0
@@ -146,7 +133,6 @@ if Config.NPCReports.Fights and Config.NPCReports.Fights.Enabled then
     end)
 end
 
--- ─── Speed cameras ──────────────────────────────────────────────────
 
 if Config.NPCReports.SpeedCamera and Config.NPCReports.SpeedCamera.Enabled
    and Config.NPCReports.SpeedCamera.Cameras and #Config.NPCReports.SpeedCamera.Cameras > 0 then
