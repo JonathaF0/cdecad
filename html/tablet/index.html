@@ -7,18 +7,18 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- ─── Tablet Container ─────────────────────────────────────────── -->
     <div id="tablet" class="tablet hidden">
         <div class="tablet-frame">
-            <div class="tablet-header">
+            <div class="tablet-header" id="tabletHeader">
                 <span class="tablet-title">CDECAD</span>
+                <span class="tablet-hint" id="tabletHint">Drag this bar to move &middot; drag the corner to resize &middot; /tabletreset restores the default</span>
                 <button id="closeTablet" class="tablet-close">&times;</button>
             </div>
             <iframe id="tabletFrame" class="tablet-iframe" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox" allow="clipboard-write"></iframe>
+            <div id="tabletResize" class="tablet-resize" title="Drag to resize"></div>
         </div>
     </div>
 
-    <!-- ─── Call Details Popup ────────────────────────────────────────── -->
     <div id="callPopup" class="call-popup hidden">
         <div class="popup-header">
             <span class="popup-title">ACTIVE CALL</span>
