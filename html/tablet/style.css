@@ -1,10 +1,8 @@
-/* ─── Reset ──────────────────────────────────────────────────────────────── */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; overflow: hidden; pointer-events: none; }
 
 .hidden { display: none !important; }
 
-/* ─── Tablet ─────────────────────────────────────────────────────────────── */
 .tablet {
     position: fixed;
     top: 50%;
@@ -59,8 +57,6 @@ body { background: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana
     align-items: center;
     justify-content: center;
     transition: all 0.15s;
-    /* Force a stacking context above the iframe so clicks can't be stolen
-       by focused iframe content when the user reaches for the X. */
     position: relative;
     z-index: 2;
     pointer-events: auto;
@@ -78,7 +74,40 @@ body { background: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana
     background: #0d1117;
 }
 
-/* ─── Call Details Popup ─────────────────────────────────────────────────── */
+.tablet.custom { transform: none; }
+
+.tablet-header { cursor: move; user-select: none; }
+
+.tablet.dragging .tablet-iframe { pointer-events: none; }
+
+.tablet-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 22px;
+    height: 22px;
+    cursor: nwse-resize;
+    z-index: 3;
+    pointer-events: auto;
+    background:
+        linear-gradient(135deg, transparent 0 55%, #3b82f6 55% 62%, transparent 62% 72%, #3b82f6 72% 79%, transparent 79%);
+    opacity: 0.35;
+    transition: opacity 0.15s;
+}
+.tablet-resize:hover { opacity: 1; }
+.tablet-frame { position: relative; }
+
+.tablet-hint {
+    display: none;
+    color: #93a6b8;
+    font-size: 11px;
+    margin: 0 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.tablet.hinting .tablet-hint { display: inline; }
+
 .call-popup {
     position: fixed;
     top: 16px;
@@ -149,7 +178,6 @@ body { background: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana
     font-size: 14px;
 }
 
-/* Priority badges */
 .priority-badge {
     display: inline-block;
     padding: 2px 8px;
@@ -170,7 +198,6 @@ body { background: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana
     50% { opacity: 0.6; }
 }
 
-/* Status badge */
 .status-badge {
     display: inline-block;
     padding: 2px 8px;
@@ -193,7 +220,6 @@ body { background: transparent; font-family: 'Segoe UI', Tahoma, Geneva, Verdana
 }
 .call-row .call-field { flex: 1; }
 
-/* ─── Navigation Buttons ────────────────────────────────────────────────── */
 .popup-nav {
     display: flex;
 }
