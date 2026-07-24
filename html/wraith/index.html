@@ -64,7 +64,6 @@
             animation: slideOut 0.2s ease-in forwards;
         }
 
-        /* Header */
         .pr-header {
             display: flex;
             justify-content: space-between;
@@ -113,7 +112,6 @@
             background: rgba(255, 255, 255, 0.1);
         }
 
-        /* Plate Number Display */
         .pr-plate {
             display: flex;
             align-items: center;
@@ -130,7 +128,25 @@
             color: #fff;
         }
 
-        /* Alert Bar */
+        #pr-plate-design {
+            position: relative;
+            display: none;
+            width: 180px;
+            height: 90px;
+            border-radius: 6px;
+            overflow: hidden;
+            background-size: 100% 100%;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+        }
+        #pr-plate-design-num {
+            position: absolute;
+            transform: translate(-50%, -50%);
+            font-family: 'Courier New', monospace;
+            font-weight: 700;
+            letter-spacing: 2px;
+            white-space: nowrap;
+        }
+
         .pr-alert-bar {
             padding: 6px 14px;
             font-size: 11px;
@@ -164,7 +180,6 @@
             50% { opacity: 0.7; }
         }
 
-        /* Flags */
         .pr-flags {
             display: flex;
             flex-wrap: wrap;
@@ -199,7 +214,6 @@
             border: 1px solid rgba(59, 130, 246, 0.3);
         }
 
-        /* Info Sections */
         .pr-section {
             padding: 8px 14px;
             border-top: 1px solid rgba(255, 255, 255, 0.05);
@@ -240,7 +254,6 @@
         .pr-value-warn { color: #f59e0b; }
         .pr-value-bad { color: #ef4444; }
 
-        /* BOLO Section */
         .pr-bolo {
             padding: 8px 14px;
             background: rgba(239, 68, 68, 0.08);
@@ -262,7 +275,6 @@
             line-height: 1.4;
         }
 
-        /* Footer */
         .pr-footer {
             padding: 6px 14px;
             text-align: center;
@@ -286,6 +298,7 @@
 
         <div class="pr-plate">
             <span class="pr-plate-number" id="pr-plate-number"></span>
+            <span id="pr-plate-design"><span id="pr-plate-design-num"></span></span>
         </div>
 
         <div class="pr-alert-bar" id="pr-alert-bar"></div>
@@ -299,7 +312,10 @@
 
         <div class="pr-section" id="pr-owner-section">
             <div class="pr-section-title">Registered Owner</div>
-            <div id="pr-owner-info"></div>
+            <div style="display:flex; gap:10px;">
+                <img id="pr-owner-photo" alt="" style="display:none; width:56px; height:66px; object-fit:cover; border-radius:4px; border:1px solid rgba(255,255,255,0.15); align-self:flex-start;">
+                <div id="pr-owner-info" style="flex:1; min-width:0;"></div>
+            </div>
         </div>
 
         <div class="pr-bolo" id="pr-bolo-section" style="display:none;">
@@ -313,8 +329,10 @@
     <script>
         const container = document.getElementById('plate-result');
 
+        var RES = (location.hostname || '').replace(/^cfx-nui-/, '') || 'CDECAD';
+
         document.getElementById('pr-close').addEventListener('click', function() {
-            fetch('https://cde-wraith/closePlateResult', { method: 'POST', body: JSON.stringify({}) });
+            try { fetch('https://' + RES + '/closePlateResult', { method: 'POST', body: '{}' }); } catch (e) {  }
         });
 
         window.addEventListener('message', function(event) {
@@ -332,19 +350,32 @@
         });
 
         function showResult(data, cam) {
-            // Camera badge
             const camEl = document.getElementById('pr-cam');
             camEl.textContent = cam === 'manual' ? 'Manual' : cam + ' cam';
 
-            // Plate number
-            document.getElementById('pr-plate-number').textContent = data.plate || '???';
+            const plateTextEl = document.getElementById('pr-plate-number');
+            const designEl = document.getElementById('pr-plate-design');
+            const designNum = document.getElementById('pr-plate-design-num');
+            plateTextEl.textContent = data.plate || '???';
+            const pd = data.plateDesign;
+            if (pd && pd.imageDataUri) {
+                plateTextEl.style.display = 'none';
+                designEl.style.display = 'block';
+                designEl.style.backgroundImage = 'url("' + pd.imageDataUri + '")';
+                designNum.textContent = data.plate || '???';
+                designNum.style.left = (pd.textXPercent != null ? pd.textXPercent : 50) + '%';
+                designNum.style.top = (pd.textYPercent != null ? pd.textYPercent : 60) + '%';
+                designNum.style.color = pd.textColor || '#000';
+                designNum.style.fontSize = Math.round(90 * ((pd.textSizePercent != null ? pd.textSizePercent : 28) / 100)) + 'px';
+            } else {
+                plateTextEl.style.display = '';
+                designEl.style.display = 'none';
+            }
 
-            // Alert bar
             const alertBar = document.getElementById('pr-alert-bar');
             alertBar.className = 'pr-alert-bar';
 
             if (data.found === false) {
-                // No CAD record (AI traffic / unregistered plate)
                 alertBar.classList.add('pr-alert-caution');
                 alertBar.textContent = 'NOT ON FILE';
             } else if (data.alertLevel === 'alert') {
@@ -358,7 +389,6 @@
                 alertBar.textContent = 'CLEAN';
             }
 
-            // Flags
             const flagsEl = document.getElementById('pr-flags');
             flagsEl.innerHTML = '';
             if (data.flags && data.flags.length > 0) {
@@ -373,7 +403,6 @@
                 flagsEl.style.display = 'none';
             }
 
-            // Cached scan hits carry no vehicle/owner payload; locking pulls the full record.
             const vehSection = document.getElementById('pr-vehicle-section');
             const ownerSection = document.getElementById('pr-owner-section');
 
@@ -388,7 +417,6 @@
                 footerEl.innerHTML = 'CDECAD &bull; Scan hit &bull; Lock plate for full details';
             } else {
                 footerEl.innerHTML = 'CDECAD &bull; Press Backspace to dismiss';
-                // Vehicle info
                 vehSection.style.display = 'block';
                 const vehEl = document.getElementById('pr-vehicle-info');
                 const veh = data.vehicle || {};
@@ -398,13 +426,19 @@
                 addRow(vehEl, 'Registration', veh.registrationStatus || 'Unknown', statusClass(veh.registrationStatus));
                 addRow(vehEl, 'Insurance', veh.insuranceStatus || 'Unknown', statusClass(veh.insuranceStatus));
 
-                // Owner info
                 const ownerEl = document.getElementById('pr-owner-info');
+                const ownerPhoto = document.getElementById('pr-owner-photo');
                 const owner = data.owner;
                 ownerEl.innerHTML = '';
 
                 if (owner) {
                     ownerSection.style.display = 'block';
+                    if (owner.mugshotUrl) {
+                        ownerPhoto.src = owner.mugshotUrl;
+                        ownerPhoto.style.display = 'block';
+                    } else {
+                        ownerPhoto.style.display = 'none';
+                    }
                     addRow(ownerEl, 'Name', owner.name || 'Unknown');
                     if (owner.dateOfBirth) {
                         addRow(ownerEl, 'DOB', formatDate(owner.dateOfBirth));
@@ -421,7 +455,6 @@
                 }
             }
 
-            // BOLO section
             const boloSection = document.getElementById('pr-bolo-section');
             const boloTitle = document.getElementById('pr-bolo-title');
             const boloText = document.getElementById('pr-bolo-text');
