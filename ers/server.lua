@@ -4,17 +4,13 @@ do
 
     Config.CADEndpoint = GetConvar('CDE_CAD_API_URL', '')
     Config.APIKey      = GetConvar('CDE_CAD_API_KEY', '')
--- server/main.lua
--- ERS Bridge for CDECAD - Server-side
--- Hooks into night_ers server events and pushes data to the CAD backend API.
 
-local activeCallouts = {} -- Track active ERS callouts per player source
-local activeTrafficStops = {} -- Track active traffic stop ersCalloutId per player source (for closing on pullover end)
-local pendingTrafficStopPed = {} -- Track ped data from pullover NPC interaction (for pairing with vehicle)
-local pendingTrafficStopLoc = {} -- Track location data from pullover NPC interaction
-local trafficStopHandled = {} -- Dedup: tracks whether a traffic stop was already sent for this player's current pullover
+local activeCallouts = {}
+local activeTrafficStops = {}
+local pendingTrafficStopPed = {}
+local pendingTrafficStopLoc = {}
+local trafficStopHandled = {}
 
--- ─── Helper: Build headers for CAD API requests ────────────────────────────
 local function GetHeaders()
     return {
         ["Content-Type"]  = "application/json",
@@ -22,19 +18,16 @@ local function GetHeaders()
     }
 end
 
--- ─── Helper: Build API URL ─────────────────────────────────────────────────
 local function GetApiUrl(path)
     return Config.CADEndpoint .. "/api/fivem/ers/" .. path
 end
 
--- ─── Helper: Debug logging ─────────────────────────────────────────────────
 local function DebugLog(msg)
     if Config.EnableDebug then
         print("[CDE-ERS] " .. msg)
     end
 end
 
--- ─── Helper: Base64 encode (for x-payload fallback) ────────────────────────
 local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 local function base64encode(data)
     return ((data:gsub('.', function(x)
@@ -49,9 +42,6 @@ local function base64encode(data)
     end) .. ({ '', '==', '=' })[#data % 3 + 1])
 end
 
--- ─── Helper: HTTP POST to CAD API ──────────────────────────────────────────
--- Payload goes in both the body and the x-payload header (base64), since
--- Cloudflare can strip POST bodies from non-browser user agents.
 local function PostToCAD(path, data, callback)
     local url = GetApiUrl(path)
     local jsonData = json.encode(data)
@@ -76,7 +66,6 @@ local function PostToCAD(path, data, callback)
     end, "POST", jsonData, headers)
 end
 
--- ─── Helper: HTTP GET from CAD API ─────────────────────────────────────────
 local function GetFromCAD(path, callback)
     local url = GetApiUrl(path)
     local headers = GetHeaders()
@@ -98,10 +87,8 @@ local function GetFromCAD(path, callback)
     end, "GET", "", headers)
 end
 
--- ─── Helper: Get callout ID from calloutData ───────────────────────────────
 local function GetCalloutId(calloutData)
     if not calloutData then return nil end
-    -- ERS provides various identifiers; check PascalCase first, then camelCase
     return calloutData.CalloutId
         or calloutData.calloutId
         or calloutData.Id
@@ -110,15 +97,11 @@ local function GetCalloutId(calloutData)
         or (calloutData.CalloutName or calloutData.calloutType) and (tostring(calloutData.CalloutName or calloutData.calloutType) .. "_" .. tostring(os.time()))
 end
 
--- ─── Helper: Get player callSign ───────────────────────────────────────────
 local function GetPlayerCallSign(source)
     local name = GetPlayerName(source)
     return name or ("Unit-" .. tostring(source))
 end
 
--- ─── Helper: Get player Discord ID ───────────────────────────────────────────
--- Returns the raw numeric Discord ID (without the "discord:" prefix) so the
--- backend can cross-reference it against the active units table.
 local function GetPlayerDiscordId(source)
     local id = GetPlayerIdentifierByType(source, 'discord')
     if id then
@@ -127,11 +110,9 @@ local function GetPlayerDiscordId(source)
     return nil
 end
 
--- ─── Helper: Map ERS service type ──────────────────────────────────────────
 local function GetServiceType(calloutData)
     if not calloutData then return "police" end
 
-    -- Check explicit service type field first
     local sType = calloutData.ServiceType or calloutData.serviceType or calloutData.service_type
     if type(sType) == "string" then
         sType = sType:lower()
@@ -140,7 +121,6 @@ local function GetServiceType(calloutData)
         end
     end
 
-    -- Derive from CalloutUnitsRequired (ERS sends this for callouts)
     local units = calloutData.CalloutUnitsRequired
     if units then
         if units.policeRequired then return "police" end
@@ -152,7 +132,6 @@ local function GetServiceType(calloutData)
     return "police"
 end
 
--- ─── Helper: Map ERS priority ──────────────────────────────────────────────
 local function GetPriority(calloutData)
     if not calloutData then return "medium" end
     local p = calloutData.Priority or calloutData.priority
@@ -165,10 +144,6 @@ local function GetPriority(calloutData)
     return "medium"
 end
 
--- ─── License status normalization ──────────────────────────────────────────
--- ERS uses string values like "VALID", "EXPIRED", "SUSPENDED", "REVOKED",
--- "NO LICENSE" plus variants like "INTERNATIONAL LICENSE (VALID)" and
--- "REPORTED STOLEN (VALID)". Normalize to the CAD's enum.
 local function NormalizeLicenseStatus(raw, isValidBool)
     if type(raw) == "string" and raw ~= "" then
         local up = raw:upper()
@@ -183,16 +158,11 @@ local function NormalizeLicenseStatus(raw, isValidBool)
     return nil
 end
 
--- ─── Build civilian payload from pedData ───────────────────────────────────
--- Covers the full ERS pedData surface: name, demographics, contact info,
--- profile picture, all five license types (Car/Bike/Boat/Pilot/Truck),
--- flags/markers, and MDT identifiers when night_shifts_mdt is running.
 local function BuildCivilianPayload(pedData, ersCalloutId)
     if not pedData then return nil end
 
     return {
         ersCalloutId = ersCalloutId,
-        -- Identity
         firstName      = pedData.FirstName or "Unknown",
         middleName     = pedData.MiddleName or nil,
         lastName       = pedData.LastName or "Doe",
@@ -201,7 +171,6 @@ local function BuildCivilianPayload(pedData, ersCalloutId)
         race           = pedData.Nationality or nil,
         nationality    = pedData.Nationality or nil,
         profilePicture = pedData.ProfilePicture or nil,
-        -- Address / contact
         address    = pedData.Address or nil,
         city       = pedData.City or nil,
         state      = pedData.State or nil,
@@ -209,7 +178,6 @@ local function BuildCivilianPayload(pedData, ersCalloutId)
         postalCode = pedData.PostalCode or nil,
         phone      = pedData.Phone or pedData.PhoneNumber or nil,
         email      = pedData.Email or nil,
-        -- Licenses - pass through raw + _Is_Valid so the route can normalize
         license_car            = pedData.License_Car or nil,
         license_car_is_valid   = pedData.License_Car_Is_Valid,
         license_bike           = pedData.License_Bike or nil,
@@ -220,24 +188,16 @@ local function BuildCivilianPayload(pedData, ersCalloutId)
         license_pilot_is_valid = pedData.License_Pilot_Is_Valid,
         license_truck          = pedData.License_Truck or nil,
         license_truck_is_valid = pedData.License_Truck_Is_Valid,
-        -- Backward-compat aliases (drivers license summary)
         hasDriversLicense    = pedData.License_Car_Is_Valid or false,
         driversLicenseStatus = NormalizeLicenseStatus(pedData.License_Car, pedData.License_Car_Is_Valid),
-        -- Notes / warrants
         flagsOrMarkers = pedData.FlagsOrMarkers or nil,
-        -- MDT identifiers (only set when night_shifts_mdt is running)
         mdtCivilianId = pedData.mdtCivilianId or nil,
         mdtPersonalId = pedData.mdtPersonalId or nil,
-        -- Existing ERS ped/civ identifiers
         civId = pedData.civId or pedData.id or nil,
         pedId = pedData.pedId or pedData.ped_id or nil,
     }
 end
 
--- ─── Build vehicle payload from vehicleData ────────────────────────────────
--- Covers the full ERS vehicleData surface including compliance (mot,
--- insurance, tax, stolen, bolo) and metadata (vehicle_class, secondary
--- color, picture URL) from the MDT-merged path.
 local function BuildVehiclePayload(vehicleData, ersCalloutId)
     if not vehicleData then return nil end
     return {
@@ -251,22 +211,16 @@ local function BuildVehiclePayload(vehicleData, ersCalloutId)
         vehicleClass   = vehicleData.vehicle_class or nil,
         vehiclePictureUrl = vehicleData.vehicle_picture_url or nil,
         ownerName      = vehicleData.owner_name or nil,
-        -- Compliance
         stolen         = vehicleData.stolen or false,
         mot            = vehicleData.mot,
         insurance      = vehicleData.insurance,
         tax            = vehicleData.tax,
-        -- BOLO
         bolo           = vehicleData.bolo,
         boloDescription = vehicleData.bolo_description or nil,
     }
 end
 
--- ========================================================================
--- ERS EVENT HANDLERS
--- ========================================================================
 
--- ERS c_functions.lua fires TriggerServerEvent for each of these.
 RegisterNetEvent("ErsIntegration::OnIsOfferedCallout")
 RegisterNetEvent("ErsIntegration::OnAcceptedCalloutOffer")
 RegisterNetEvent("ErsIntegration::OnArrivedAtCallout")
@@ -280,9 +234,6 @@ RegisterNetEvent("ErsIntegration::OnPulloverEnded")
 RegisterNetEvent("ErsIntegration::OnPursuitStarted")
 RegisterNetEvent("ErsIntegration::OnPursuitEnded")
 
--- ─── OnIsOfferedCallout ────────────────────────────────────────────────────
--- Fires when ERS offers a callout to a player (before they accept/decline).
--- The offered callout's identity is logged unconditionally.
 AddEventHandler("ErsIntegration::OnIsOfferedCallout", function(calloutData)
     local src = source
     local cd = calloutData or {}
@@ -295,8 +246,6 @@ AddEventHandler("ErsIntegration::OnIsOfferedCallout", function(calloutData)
         tostring(src), tostring(cid), tostring(cname), tostring(cx), tostring(cy)))
 end)
 
--- ─── OnAcceptedCalloutOffer ─────────────────────────────────────────────────
--- Fired when a player accepts an ERS callout offer.
 AddEventHandler("ErsIntegration::OnAcceptedCalloutOffer", function(calloutData)
     local source = source
     DebugLog("OnAcceptedCalloutOffer RAW: " .. json.encode(calloutData or {}))
@@ -308,18 +257,14 @@ AddEventHandler("ErsIntegration::OnAcceptedCalloutOffer", function(calloutData)
         return
     end
 
-    -- Track the active callout for this player
     activeCallouts[tostring(source)] = calloutId
     DebugLog("Player " .. tostring(source) .. " accepted callout: " .. calloutId)
 
-    -- Create CAD call
     if Config.CreateCallOnAccept then
-        -- ERS uses PascalCase field names (CalloutName, Description, Coordinates, StreetName, etc.)
         local callType = calloutData.CalloutName or calloutData.calloutName or calloutData.calloutType or calloutData.type or "ERS Callout"
         local location = calloutData.StreetName or calloutData.Location or calloutData.location or calloutData.Address or calloutData.address or "Unknown"
         local postal   = calloutData.Postal or calloutData.postal or calloutData.PostalCode or ""
 
-        -- Get coordinates from the callout data (ERS uses PascalCase "Coordinates")
         local coords = nil
         if calloutData.Coordinates then
             coords = calloutData.Coordinates
@@ -342,7 +287,6 @@ AddEventHandler("ErsIntegration::OnAcceptedCalloutOffer", function(calloutData)
             if success and data then
                 DebugLog("Created CAD call: " .. tostring(data.incidentNumber))
 
-                -- Auto-attach the accepting unit
                 if Config.AttachUnitOnAccept then
                     PostToCAD("unit-attach", {
                         ersCalloutId = calloutId,
@@ -351,9 +295,6 @@ AddEventHandler("ErsIntegration::OnAcceptedCalloutOffer", function(calloutData)
                     })
                 end
 
-                -- calloutData.FirstName/LastName is the 911 caller, not the
-                -- suspect; suspects arrive via OnFirstNPCInteraction, so the
-                -- caller is not created as a civilian.
                 if calloutData.FirstName and calloutData.LastName then
                     DebugLog("Callout caller: " .. calloutData.FirstName .. " " .. calloutData.LastName .. " (not creating as civilian - this is the 911 caller)")
                 end
@@ -362,8 +303,6 @@ AddEventHandler("ErsIntegration::OnAcceptedCalloutOffer", function(calloutData)
     end
 end)
 
--- ─── OnArrivedAtCallout ─────────────────────────────────────────────────────
--- Fired when a player arrives at the callout scene.
 AddEventHandler("ErsIntegration::OnArrivedAtCallout", function(calloutData)
     local source = source
     DebugLog("OnArrivedAtCallout RAW: " .. json.encode(calloutData or {}))
@@ -380,8 +319,6 @@ AddEventHandler("ErsIntegration::OnArrivedAtCallout", function(calloutData)
     })
 end)
 
--- ─── OnEndedACallout ────────────────────────────────────────────────────────
--- Fired when an ERS callout ends (completed or abandoned).
 AddEventHandler("ErsIntegration::OnEndedACallout", function(calloutData)
     local source = source
     DebugLog("OnEndedACallout RAW: " .. json.encode(calloutData or {}))
@@ -397,12 +334,9 @@ AddEventHandler("ErsIntegration::OnEndedACallout", function(calloutData)
         ersCalloutId = calloutId,
     })
 
-    -- Clean up tracking
     activeCallouts[tostring(source)] = nil
 end)
 
--- ─── OnCalloutCompletedSuccesfully ──────────────────────────────────────────
--- Fired when an ERS callout is completed successfully.
 AddEventHandler("ErsIntegration::OnCalloutCompletedSuccesfully", function(calloutData)
     local source = source
     DebugLog("OnCalloutCompletedSuccesfully RAW: " .. json.encode(calloutData or {}))
@@ -420,12 +354,9 @@ AddEventHandler("ErsIntegration::OnCalloutCompletedSuccesfully", function(callou
     activeCallouts[tostring(source)] = nil
 end)
 
--- ─── Helper: Get location data for a player ───────────────────────────────
--- Server-side coords are always available. Street name comes from client callback.
 local pendingLocationCallbacks = {}
 
 local function GetPlayerLocation(playerSource, callback)
-    -- Get server-side coordinates immediately
     local coords = nil
     local playerPed = GetPlayerPed(playerSource)
     if playerPed and playerPed ~= 0 then
@@ -435,7 +366,6 @@ local function GetPlayerLocation(playerSource, callback)
         end
     end
 
-    -- Request street name from client
     local key = tostring(playerSource)
     pendingLocationCallbacks[key] = function(clientLoc)
         pendingLocationCallbacks[key] = nil
@@ -448,7 +378,6 @@ local function GetPlayerLocation(playerSource, callback)
 
     TriggerClientEvent('ErsIntegration::RequestLocation', playerSource)
 
-    -- Fallback: if client doesn't respond within 2 seconds, use coords only
     SetTimeout(2000, function()
         if pendingLocationCallbacks[key] then
             DebugLog("Location callback timeout for player " .. key .. ", using server coords only")
@@ -466,9 +395,6 @@ AddEventHandler('ErsIntegration::LocationResponse', function(locationData)
     end
 end)
 
--- ─── SendTrafficStop ──────────────────────────────────────────────────────
--- Builds the traffic stop payload (civilian + vehicle + location + officer)
--- and sends it to the CAD API.
 local function SendTrafficStop(source, pedData, vehicleData, locationData)
     local loc = locationData or {}
     local civPayload = BuildCivilianPayload(pedData, nil) or {}
@@ -476,18 +402,15 @@ local function SendTrafficStop(source, pedData, vehicleData, locationData)
     civPayload.lastName = (pedData and (pedData.LastName)) or "Driver"
 
     local body = {
-        -- Officer
         callSign    = GetPlayerCallSign(source),
         discordId   = GetPlayerDiscordId(source),
-        -- Location
         location    = loc.location or nil,
         postal      = loc.postal or nil,
         coordinates = loc.coordinates or nil,
     }
     for k, v in pairs(civPayload) do body[k] = v end
     for k, v in pairs(vehPayload) do body[k] = v end
-    body.ersCalloutId = nil -- traffic-stop endpoint assigns its own
-    -- Legacy field aliases the route reads alongside the new ones.
+    body.ersCalloutId = nil
     body.registration = vehicleData and vehicleData.tax or nil
     body.insurance    = vehicleData and vehicleData.insurance or nil
 
@@ -506,10 +429,6 @@ local function SendTrafficStop(source, pedData, vehicleData, locationData)
     end)
 end
 
--- ─── HandleTrafficStop ────────────────────────────────────────────────────
--- Wrapper that resolves player location before sending.
--- If location data was provided (e.g. from client), uses it directly.
--- Otherwise, requests street name from client with server-side coord fallback.
 local function HandleTrafficStop(playerSource, pedData, vehicleData, locationData)
     DebugLog("Processing traffic stop for player " .. tostring(playerSource))
 
@@ -522,64 +441,48 @@ local function HandleTrafficStop(playerSource, pedData, vehicleData, locationDat
     end
 end
 
--- ─── OnFirstNPCInteraction ──────────────────────────────────────────────────
--- Context values: "on_interaction", "on_aiming_at_ped", "on_pullover",
--- "on_pursuit_start", "on_pursuit_end", "on_pullover_end".
--- May arrive either directly on the server as
--- TriggerEvent(..., source, pedData, context) or via client callback as
--- TriggerServerEvent(..., pedData, context); the arg shapes differ.
 AddEventHandler("ErsIntegration::OnFirstNPCInteraction", function(srcOrPed, pedDataOrCtx, contextOrNil, locOrNil)
     local playerSource, pedData, context, locationData
 
     if type(srcOrPed) == "number" then
-        -- Server-side direct call: TriggerEvent(event, source, pedData, context, loc)
         playerSource = srcOrPed
         pedData      = pedDataOrCtx
         context      = contextOrNil
         locationData = locOrNil
     else
-        -- Client callback: TriggerServerEvent(event, pedData, context, loc)
-        -- args map to: srcOrPed=pedData, pedDataOrCtx=context, contextOrNil=loc
         playerSource = source
         pedData      = srcOrPed
         context      = pedDataOrCtx
         locationData = contextOrNil
     end
 
-    -- Logged unconditionally (not debug-gated)
-    print("[CDE-ERS] OnFirstNPCInteraction source=" .. tostring(playerSource) .. " context=" .. tostring(context) .. " pedName=" .. tostring(pedData and (pedData.FirstName .. " " .. pedData.LastName) or "nil"))
+    local pedName = pedData and ((tostring(pedData.FirstName or "?")) .. " " .. (tostring(pedData.LastName or "?"))) or "nil"
+    print("[CDE-ERS] OnFirstNPCInteraction source=" .. tostring(playerSource) .. " context=" .. tostring(context) .. " pedName=" .. pedName)
 
     if not pedData then return end
 
     local calloutId = activeCallouts[tostring(playerSource)]
     local ctx = context and tostring(context):lower() or ""
 
-    -- Detect pullover/pursuit contexts from ERS
     local isPullover = (ctx == "on_pullover")
     local isPursuit  = (ctx == "on_pursuit_start")
 
     DebugLog("NPC interaction | Context: " .. tostring(context) .. " | Callout: " .. tostring(calloutId or "none") .. " | isPullover: " .. tostring(isPullover) .. " | isPursuit: " .. tostring(isPursuit))
 
-    -- ── Pullover or Pursuit context (outside callout) → traffic-stop endpoint ──
     if (isPullover or isPursuit) and Config.CreateOnTrafficStop then
         local key = tostring(playerSource)
-        -- If a traffic stop was already sent for this pullover (e.g. driver already
-        -- processed), ignore subsequent NPC interactions (passengers) to avoid duplicates.
         if activeTrafficStops[key] then
             DebugLog("Traffic stop already active for this pullover, skipping passenger NPC interaction")
             return
         end
-        -- Also skip if the stop was already queued/handled this session
         if trafficStopHandled[key] then
             DebugLog("Traffic stop already handled for this pullover, skipping NPC interaction")
             return
         end
         DebugLog("Pullover/pursuit NPC detected via context, storing ped data and waiting for vehicle")
-        -- Store ped data and location for pairing with vehicle data from OnFirstVehicleInteraction
         pendingTrafficStopPed[key] = pedData
         pendingTrafficStopLoc[key] = locationData
         trafficStopHandled[key] = false
-        -- Fallback: if vehicle data never arrives within 3 seconds, send ped-only stop
         SetTimeout(3000, function()
             if not trafficStopHandled[key] then
                 DebugLog("Fallback: no vehicle data arrived, sending ped-only traffic stop")
@@ -593,7 +496,6 @@ AddEventHandler("ErsIntegration::OnFirstNPCInteraction", function(srcOrPed, pedD
         return
     end
 
-    -- ── During a callout → create civilian linked to the callout ──
     if calloutId and Config.CreateCivilians then
         PostToCAD("civilian", BuildCivilianPayload(pedData, calloutId), function(success, data)
             if success and data then
@@ -603,7 +505,6 @@ AddEventHandler("ErsIntegration::OnFirstNPCInteraction", function(srcOrPed, pedD
             end
         end)
     elseif not calloutId and not (ctx == "on_pullover_end" or ctx == "on_pursuit_end") and Config.CreateOnTrafficStop then
-        -- Generic NPC interaction outside callout (ID check, etc.)
         DebugLog("NPC interaction outside callout, creating via traffic-stop endpoint")
         HandleTrafficStop(playerSource, pedData, nil, locationData)
     else
@@ -611,10 +512,6 @@ AddEventHandler("ErsIntegration::OnFirstNPCInteraction", function(srcOrPed, pedD
     end
 end)
 
--- ─── OnFirstVehicleInteraction ──────────────────────────────────────────────
--- ERS fires this with context "on_pullover", "on_pursuit_start", etc.
--- For pullover/pursuit, the NPC data was already sent via OnFirstNPCInteraction;
--- this adds the vehicle data to the existing traffic stop.
 AddEventHandler("ErsIntegration::OnFirstVehicleInteraction", function(srcOrVeh, vehDataOrCtx, contextOrNil, locOrNil)
     local playerSource, vehicleData, context, locationData
 
@@ -624,7 +521,6 @@ AddEventHandler("ErsIntegration::OnFirstVehicleInteraction", function(srcOrVeh, 
         context      = contextOrNil
         locationData = locOrNil
     else
-        -- Client: TriggerServerEvent(event, vehicleData, context, loc)
         playerSource = source
         vehicleData  = srcOrVeh
         context      = vehDataOrCtx
@@ -640,12 +536,11 @@ AddEventHandler("ErsIntegration::OnFirstVehicleInteraction", function(srcOrVeh, 
     local isPursuit  = (ctx == "on_pursuit_start")
     local calloutId = activeCallouts[tostring(playerSource)]
 
-    -- ── Pullover/pursuit vehicle → send the SINGLE traffic stop with ped + vehicle data ──
     if (isPullover or isPursuit) and Config.CreateOnTrafficStop then
         local key = tostring(playerSource)
         local savedPed = pendingTrafficStopPed[key]
         local savedLoc = pendingTrafficStopLoc[key] or locationData
-        pendingTrafficStopPed[key] = nil -- clean up
+        pendingTrafficStopPed[key] = nil
         pendingTrafficStopLoc[key] = nil
         if trafficStopHandled[key] then
             DebugLog("Pullover/pursuit vehicle arrived but traffic stop already sent, skipping")
@@ -657,7 +552,6 @@ AddEventHandler("ErsIntegration::OnFirstVehicleInteraction", function(srcOrVeh, 
         return
     end
 
-    -- ── During a callout → create vehicle linked to the callout ──
     if not Config.CreateVehicles then return end
     if not calloutId then
         DebugLog("Vehicle interaction outside callout, skipping vehicle creation")
@@ -668,30 +562,23 @@ AddEventHandler("ErsIntegration::OnFirstVehicleInteraction", function(srcOrVeh, 
     PostToCAD("vehicle", BuildVehiclePayload(vehicleData, calloutId))
 end)
 
--- ─── OnPullover (ERS native event) ───────────────────────────────────────
--- Fired by night_ers c_functions.lua via TriggerServerEvent when a
--- player initiates a traffic stop / pullover.
 AddEventHandler("ErsIntegration::OnPullover", function(pedData, vehicleData, locationData)
     local src = source
-    -- Logged unconditionally (not debug-gated)
     print("[CDE-ERS] >>> OnPullover EVENT RECEIVED | src=" .. tostring(src) ..
         " | ped=" .. tostring(pedData and pedData.FirstName or "nil") ..
         " | veh=" .. tostring(vehicleData and vehicleData.license_plate or "nil"))
     if not Config.CreateOnTrafficStop then return end
     local key = tostring(src)
-    -- Skip if already handled by OnFirstNPCInteraction + OnFirstVehicleInteraction
     if trafficStopHandled[key] then
         DebugLog("OnPullover skipped - traffic stop already created via NPC/Vehicle interaction events")
         return
     end
     trafficStopHandled[key] = true
-    pendingTrafficStopPed[key] = nil -- clean up any pending data
+    pendingTrafficStopPed[key] = nil
     pendingTrafficStopLoc[key] = nil
     HandleTrafficStop(src, pedData, vehicleData, locationData)
 end)
 
--- ─── OnPursuitStarted ───────────────────────────────────────────────────────
--- Fired when an ERS pursuit begins.
 AddEventHandler("ErsIntegration::OnPursuitStarted", function(pedData, vehicleData)
     local source = source
     DebugLog("OnPursuitStarted RAW pedData=" .. json.encode(pedData or {}) .. " vehicleData=" .. json.encode(vehicleData or {}))
@@ -710,12 +597,10 @@ AddEventHandler("ErsIntegration::OnPursuitStarted", function(pedData, vehicleDat
     end
 end)
 
--- ─── OnPulloverEnded / OnPursuitEnded - close call and reset dedup flag ──────
 AddEventHandler("ErsIntegration::OnPulloverEnded", function(pedData, vehicleData)
     local key = tostring(source)
     DebugLog("Pullover ended for player " .. key .. ", resetting dedup flag")
 
-    -- Close the traffic stop call in the CAD (clears units 10-8 and removes call)
     if Config.CloseCallOnEnd and activeTrafficStops[key] then
         DebugLog("Closing traffic stop call: " .. activeTrafficStops[key])
         PostToCAD("callout-end", {
@@ -733,7 +618,6 @@ AddEventHandler("ErsIntegration::OnPursuitEnded", function(pedData)
     local key = tostring(source)
     DebugLog("Pursuit ended for player " .. key .. ", resetting dedup flag")
 
-    -- Close the traffic stop call in the CAD (clears units 10-8 and removes call)
     if Config.CloseCallOnEnd and activeTrafficStops[key] then
         DebugLog("Closing pursuit-related traffic stop call: " .. activeTrafficStops[key])
         PostToCAD("callout-end", {
@@ -747,14 +631,9 @@ AddEventHandler("ErsIntegration::OnPursuitEnded", function(pedData)
     pendingTrafficStopLoc[key] = nil
 end)
 
--- ─── OnToggleShift ──────────────────────────────────────────────────────────
--- Mirrors a player's ERS shift toggle to the CAD by hitting /ers/duty.
--- ERS fires this with the signature (source, isOnShift, serviceType);
--- source is the first argument, not the FiveM `source` global.
 AddEventHandler("ErsIntegration::OnToggleShift", function(srcArg, isOnShift, serviceType)
     if not Config.ToggleDutyOnShift then return end
 
-    -- Prefer the explicit source parameter; fall back to the global
     local src = tonumber(srcArg) or source
     if not src or src == 0 then
         DebugLog("OnToggleShift skipped - no source resolved")
@@ -785,7 +664,6 @@ AddEventHandler("ErsIntegration::OnToggleShift", function(srcArg, isOnShift, ser
     end)
 end)
 
--- ─── Player Disconnect Cleanup ──────────────────────────────────────────────
 AddEventHandler("playerDropped", function()
     local source = source
     activeCallouts[tostring(source)] = nil
@@ -795,13 +673,7 @@ AddEventHandler("playerDropped", function()
     trafficStopHandled[tostring(source)] = nil
 end)
 
--- ========================================================================
--- SERVER CONSOLE TEST COMMANDS
--- ========================================================================
 
--- ─── ers_test ───────────────────────────────────────────────────────────────
--- Tests connectivity to the CAD backend API.
--- Usage: ers_test
 RegisterCommand("ers_test", function(source, args)
     print("[CDE-ERS] ─── Running Connection Test ───")
     print("[CDE-ERS] Endpoint: " .. Config.CADEndpoint)
@@ -812,7 +684,6 @@ RegisterCommand("ers_test", function(source, args)
         return
     end
 
-    -- Test 1: Create a test callout
     local testId = "ERS_TEST_" .. tostring(os.time())
     print("[CDE-ERS] [1/4] Creating test callout (" .. testId .. ")...")
 
@@ -833,7 +704,6 @@ RegisterCommand("ers_test", function(source, args)
         end
         print("[CDE-ERS] [1/4] OK - Call created: " .. tostring(data.incidentNumber or "?"))
 
-        -- Test 2: Create a test civilian
         print("[CDE-ERS] [2/4] Creating test civilian...")
         PostToCAD("civilian", {
             ersCalloutId     = testId,
@@ -851,7 +721,6 @@ RegisterCommand("ers_test", function(source, args)
                 print("[CDE-ERS] [2/4] OK - Civilian created: " .. tostring(civData.fullName or "?"))
             end
 
-            -- Test 3: Create a test vehicle
             print("[CDE-ERS] [3/4] Creating test vehicle...")
             PostToCAD("vehicle", {
                 ersCalloutId = testId,
@@ -869,7 +738,6 @@ RegisterCommand("ers_test", function(source, args)
                     print("[CDE-ERS] [3/4] OK - Vehicle created: " .. tostring(vehData.plate or "?"))
                 end
 
-                -- Test 4: Close the test callout
                 print("[CDE-ERS] [4/4] Closing test callout...")
                 PostToCAD("callout-end", {
                     ersCalloutId = testId,
@@ -886,11 +754,8 @@ RegisterCommand("ers_test", function(source, args)
             end)
         end)
     end)
-end, true) -- true = restricted to server console only
+end, true)
 
--- ─── ers_status ─────────────────────────────────────────────────────────────
--- Shows current ERS bridge status and active callouts.
--- Usage: ers_status
 RegisterCommand("ers_status", function(source, args)
     print("[CDE-ERS] ─── Bridge Status ───")
     print("[CDE-ERS] Endpoint:        " .. Config.CADEndpoint)
@@ -919,18 +784,11 @@ RegisterCommand("ers_status", function(source, args)
     print("[CDE-ERS] ────────────────────")
 end, true)
 
--- ─── ers_debug ──────────────────────────────────────────────────────────────
--- Toggles debug logging on/off at runtime.
--- Usage: ers_debug
 RegisterCommand("ers_debug", function(source, args)
     Config.EnableDebug = not Config.EnableDebug
     print("[CDE-ERS] Debug mode: " .. (Config.EnableDebug and "ON" or "OFF"))
 end, true)
 
--- ─── ers_exports ───────────────────────────────────────────────────────────
--- Lists night_ers exports from both the fxmanifest metadata and the live
--- exports table (night_ers registers exports at runtime).
--- Usage: ers_exports
 RegisterCommand("ers_exports", function(source, args)
     print("[CDE-ERS] ─── Listing night_ers exports ───")
     local resourceName = "night_ers"
@@ -947,7 +805,6 @@ RegisterCommand("ers_exports", function(source, args)
         print(string.format("[CDE-ERS]   shared :%s", tostring(name)))
     end
 
-    -- Catches exports registered via the runtime API rather than the fxmanifest
     print("[CDE-ERS] Runtime exports['night_ers']:")
     local runtimeCount = 0
     local nightExports = exports['night_ers']
@@ -968,10 +825,6 @@ RegisterCommand("ers_exports", function(source, args)
     print("[CDE-ERS] ────────────────────")
 end, true)
 
--- ─── ers_inspect ─────────────────────────────────────────────────────────────
--- Dumps one callout from getCallouts() to show the fields createCallout()
--- expects.
--- Usage: ers_inspect
 RegisterCommand("ers_inspect", function(source, args)
     print("[CDE-ERS] ─── Inspecting night_ers callout structure ───")
     local ok, callouts = pcall(function()
@@ -981,7 +834,6 @@ RegisterCommand("ers_inspect", function(source, args)
         print("[CDE-ERS] ERROR: Could not call getCallouts(). Is night_ers running?")
         return
     end
-    -- getCallouts() returns a table keyed by callout ID strings
     local count = 0
     local firstKey = nil
     local firstVal = nil
@@ -1004,10 +856,6 @@ RegisterCommand("ers_inspect", function(source, args)
     print("[CDE-ERS] ────────────────────")
 end, true)
 
--- ─── ers_test_traffic ──────────────────────────────────────────────────────
--- Sends a test traffic stop to the CAD to verify the /ers/traffic-stop
--- endpoint is reachable and working.
--- Usage: ers_test_traffic
 RegisterCommand("ers_test_traffic", function(source, args)
     print("[CDE-ERS] ─── Running Traffic Stop Test ───")
     print("[CDE-ERS] Endpoint: " .. Config.CADEndpoint)
@@ -1022,9 +870,7 @@ RegisterCommand("ers_test_traffic", function(source, args)
     print("[CDE-ERS] Sending test traffic stop (plate: " .. testPlate .. ")...")
 
     PostToCAD("traffic-stop", {
-        -- Officer
         callSign             = "TEST-1",
-        -- Civilian
         firstName            = "Test",
         lastName             = "Driver",
         dateOfBirth          = "1985-06-20",
@@ -1033,7 +879,6 @@ RegisterCommand("ers_test_traffic", function(source, args)
         firearmsLicenseStatus = nil,
         civId                = nil,
         pedId                = nil,
-        -- Vehicle
         plate  = testPlate,
         make   = "Vapid",
         model  = "Stanier",
@@ -1054,9 +899,6 @@ RegisterCommand("ers_test_traffic", function(source, args)
     end)
 end, true)
 
--- ─── ers_test_duty ─────────────────────────────────────────────────────────
--- Sends a duty sync request to the CAD using a Discord ID.
--- Usage: ers_test_duty <discordId> <on|off>
 RegisterCommand("ers_test_duty", function(source, args)
     local discordId = args[1]
     local mode = (args[2] or ""):lower()
@@ -1081,7 +923,6 @@ RegisterCommand("ers_test_duty", function(source, args)
     end)
 end, true)
 
--- ─── Catch-all: log all ErsIntegration events for diagnostics ────────────
 for _, evtName in ipairs({
     "OnToggleShift", "OnIsOfferedCallout", "OnAcceptedCalloutOffer",
     "OnArrivedAtCallout", "OnEndedACallout", "OnCalloutCompletedSuccesfully",
@@ -1093,12 +934,6 @@ for _, evtName in ipairs({
     end)
 end
 
--- ========================================================================
--- DISPATCH-CREATED ERS CALLOUT POLLING
--- ========================================================================
--- Polls the CAD for callouts created from the dispatch livemap and
--- triggers them in-game via the night_ers export (if available) or
--- sends a notification to on-shift players.
 
 local dispatchCalloutProcessing = false
 
@@ -1111,7 +946,6 @@ local function FindNearestOnShiftPlayer(coords)
         local ped = GetPlayerPed(playerId)
         if ped and ped ~= 0 then
             local pCoords = GetEntityCoords(ped)
-            -- Shift status is not checked; the nearest player is used
             local dist = #(vector3(pCoords.x, pCoords.y, pCoords.z) - vector3(coords.x, coords.y, coords.z or 0.0))
             if dist < nearestDist then
                 nearestDist = dist
@@ -1123,8 +957,6 @@ local function FindNearestOnShiftPlayer(coords)
     return nearest
 end
 
--- Dispatch flow: clone a base callout into ERS's pool via createCallout,
--- capture the cloned callout ID, then offer that specific clone to players.
 local function ProcessDispatchCallout(callout)
     local ersCalloutId = callout.ersCalloutId
     local callType    = callout.callType or "[ERS] Unknown"
@@ -1140,9 +972,6 @@ local function ProcessDispatchCallout(callout)
     local cy = coords.y or 0.0
     local cz = coords.z or 0.0
 
-    -- Pick a string-keyed, non-cloned base callout matching the intended
-    -- service type; ERS silently rejects offers whose CalloutUnitsRequired
-    -- flags don't match the player's service. Defaults to police.
     local serviceType = callout.serviceType or "police"
     local requireField = ({
         police    = "policeRequired",
@@ -1203,10 +1032,6 @@ local function ProcessDispatchCallout(callout)
         print("[CDE-ERS] No base callout found in night_ers - dispatch callout not added to pool")
     end
 
-    -- Offer the cloned callout via the SendCalloutOfferToPlayer export.
-    -- The export blocks until the client responds (5s watchdog), so each
-    -- offer runs in its own thread. It returns (ok, reason); pcall captures
-    -- both as args 2 and 3.
     if clonedCalloutId then
         for _, playerId in ipairs(GetPlayers()) do
             local pid = tonumber(playerId)
@@ -1228,7 +1053,6 @@ local function ProcessDispatchCallout(callout)
         end
     end
 
-    -- Informational client notification; the offer UI is handled by ERS above
     TriggerClientEvent('cde-ers:dispatchCallout', -1, {
         ersCalloutId    = ersCalloutId,
         clonedCalloutId = clonedCalloutId,
@@ -1240,7 +1064,6 @@ local function ProcessDispatchCallout(callout)
         description     = description,
     })
 
-    -- Ack so CAD stops re-queuing this callout.
     PostToCAD("ack-dispatch-callout", { ersCalloutId = ersCalloutId }, function(success)
         if success then
             DebugLog("Acknowledged dispatch callout: " .. tostring(ersCalloutId))
@@ -1250,10 +1073,6 @@ local function ProcessDispatchCallout(callout)
     end)
 end
 
--- ─── ers_dispatch_test ───────────────────────────────────────────────────────
--- Tests the dispatch callout flow locally (no CAD needed). Creates a callout
--- in night_ers and sends a notification to all players.
--- Usage: ers_dispatch_test [x] [y] [z]
 RegisterCommand("ers_dispatch_test", function(source, args)
     print("[CDE-ERS] ─── Running Dispatch Callout Test ───")
 
@@ -1276,9 +1095,7 @@ RegisterCommand("ers_dispatch_test", function(source, args)
     print("[CDE-ERS] ─── Dispatch Callout Test Complete ───")
 end, true)
 
--- Polling thread
 Citizen.CreateThread(function()
-    -- Wait for resource to fully load
     Citizen.Wait(5000)
 
     if not Config.EnableDispatchCallouts then
@@ -1314,7 +1131,6 @@ Citizen.CreateThread(function()
     end
 end)
 
--- ─── Startup ────────────────────────────────────────────────────────────────
 print("[CDE-ERS] ERS Bridge for CDECAD loaded successfully")
 print("[CDE-ERS] Console commands: ers_test | ers_test_traffic | ers_dispatch_test | ers_test_duty | ers_status | ers_debug | ers_inspect | ers_exports")
 if Config.APIKey == "" then
