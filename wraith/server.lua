@@ -12,46 +12,24 @@ do
     end
     Config.API_KEY      = GetConvar('CDE_CAD_API_KEY', '')
     Config.COMMUNITY_ID = GetConvar('CDE_CAD_COMMUNITY_ID', '')
---[[
-    CDE Wraith ARS 2X Integration - Server
-    Handles Wraith events and queries the CDECAD plate reader API.
-    The flagged-plates cache is rebuilt on resource start and every 60 minutes.
-]]
 
--- =============================================================================
--- CONSTANTS
--- =============================================================================
 
--- flagged-plates cache rebuild interval
+
 local CACHE_REFRESH_MS = 60 * 60 * 1000
 
--- =============================================================================
--- STATE
--- =============================================================================
 
--- per-plate cooldown for the full lookup path
 local plateCache = {}
 
--- flagged-plates cache for scan-time matching
--- flaggedCache[NORMALIZED_PLATE] = { flags = {...}, alertLevel = 'caution'|'alert' }
 local flaggedCache = {}
 local flaggedCacheGeneratedAt = nil
 local flaggedCacheCount = 0
 
--- plates registered in CAD but unflagged; tells "not in CAD" from
--- "in CAD but clean" without an API call per scan
--- registeredCache[NORMALIZED_PLATE] = true
 local registeredCache = {}
 local registeredCacheCount = 0
 
--- per-(src, plate) dedup for scan responses; wk_wars2x re-reads a plate
--- in view many times per second, so results are limited to one per window
 local scanResultCooldown = {}
 local SCAN_RESULT_COOLDOWN_S = 30
 
--- =============================================================================
--- HELPERS
--- =============================================================================
 
 local function DebugPrint(...)
     if Config.Debug then
@@ -64,14 +42,10 @@ local function NormalizePlate(plate)
     return (plate:gsub('%s', '')):upper()
 end
 
--- find a player-occupied vehicle with a matching plate; returns veh, src.
--- must run server-side: wk_wars2x v1.3.1+ fires wk:onPlateScanned via
--- TriggerServerEvent directly, so no client-local event exists.
 local function FindPlayerVehicleByPlate(plate)
     local target = NormalizePlate(plate)
     if target == '' then return nil end
     for _, pid in ipairs(GetPlayers()) do
-        -- GetPlayers() returns source IDs as strings; cast for natives
         local src = tonumber(pid)
         if src then
             local ped = GetPlayerPed(src)
@@ -88,7 +62,6 @@ local function FindPlayerVehicleByPlate(plate)
     return nil
 end
 
--- built lazily from Config.PlateReader.EmergencyVehicleModels on first use
 local emergencyModelHashes = nil
 
 local function IsEmergencyVehicle(veh)
@@ -114,9 +87,6 @@ local function MatchesEmergencyPlate(plate)
     return false
 end
 
--- =============================================================================
--- FLAGGED-PLATES CACHE (scan-time matching, never hits the API per scan)
--- =============================================================================
 
 local function RebuildFlaggedCache()
     local url = Config.API_URL .. '/civilian/fivem-flagged-plates?communityId=' .. Config.COMMUNITY_ID
@@ -135,7 +105,6 @@ local function RebuildFlaggedCache()
             return
         end
 
-        -- atomic swap: build the new map fully before replacing the live one
         local newCache = {}
         local count = 0
         for _, entry in ipairs(data.plates) do
@@ -144,6 +113,8 @@ local function RebuildFlaggedCache()
                 newCache[plate] = {
                     flags = entry.flags or {},
                     alertLevel = entry.alertLevel or 'caution',
+                    owner = entry.owner,
+                    dl = entry.dl,
                 }
                 count = count + 1
             end
@@ -153,10 +124,17 @@ local function RebuildFlaggedCache()
         flaggedCacheCount = count
         flaggedCacheGeneratedAt = data.generatedAt or os.date('!%Y-%m-%dT%H:%M:%SZ')
 
-        -- clean-registered set builds in the same swap
         local newRegistered = {}
         local regCount = 0
-        if type(data.cleanPlates) == 'table' then
+        if type(data.cleanInfo) == 'table' then
+            for _, info in ipairs(data.cleanInfo) do
+                local plate = NormalizePlate(type(info) == 'table' and info.plate or nil)
+                if plate ~= '' then
+                    newRegistered[plate] = { owner = info.owner, dl = info.dl }
+                    regCount = regCount + 1
+                end
+            end
+        elseif type(data.cleanPlates) == 'table' then
             for _, p in ipairs(data.cleanPlates) do
                 local plate = NormalizePlate(p)
                 if plate ~= '' then
@@ -177,17 +155,22 @@ local function RebuildFlaggedCache()
     })
 end
 
--- =============================================================================
--- FULL API LOOKUP (on lock)
--- =============================================================================
+
+local plateLookupBySource = {}
 
 local function LookupPlate(plate, source, cam)
-    -- wraith pads plates with spaces to 8 chars
-    local cleanPlate = plate:gsub('%s', '')
+    if type(plate) ~= 'string' then return end
+    local cleanPlate = plate:gsub('%s', ''):gsub('[^%w]', '')
 
     if cleanPlate == '' then return end
 
-    -- cooldown cache
+    local nowT = GetGameTimer()
+    if source and source > 0 then
+        local last = plateLookupBySource[source]
+        if last and (nowT - last) < 750 then return end
+        plateLookupBySource[source] = nowT
+    end
+
     local cacheKey = cleanPlate:upper()
     local now = os.time()
 
@@ -217,7 +200,6 @@ local function LookupPlate(plate, source, cam)
 
         local ok, data = pcall(json.decode, responseText)
         if not ok or not data then
-            -- send not-found so the lock is never silent on a bad response
             print(('[CDE-Wraith] Lock lookup for %s returned UNPARSEABLE response (%s...) - sending not-found'):format(
                 cleanPlate, tostring(responseText):sub(1, 80)))
             TriggerClientEvent('cde-wraith:plateResult', source, {
@@ -244,19 +226,17 @@ local function LookupPlate(plate, source, cam)
     })
 end
 
--- =============================================================================
--- WRAITH ARS 2X EVENT HANDLERS
--- =============================================================================
 
--- wraith fires TriggerServerEvent("wk:onPlateLocked") from the client plate reader
 
--- some forks pass a single table instead of (cam, plate, index)
 local function WkArgs(a, b, c)
     if type(a) == 'table' then
         return a.cam or a.camera or a.antenna or a.ant, a.plate, a.index
     end
     return a, b, c
 end
+
+local lockEventDedup = {}
+local lockEventDedupCount = 0
 
 local function HandlePlateLocked(a, b, c)
     local src = source
@@ -271,25 +251,22 @@ local function HandlePlateLocked(a, b, c)
         return
     end
 
-    -- skip permission check if no framework is configured
-    if Config.Permissions.RestrictToJobs and (Config.Permissions.UseQBCore or Config.Permissions.UseESX) then
-        TriggerEvent('cde-wraith:checkPermission', src, function(allowed)
-            if allowed then
-                LookupPlate(plate, src, cam)
-            else
-                print('[CDE-Wraith] Permission denied for player ' .. tostring(src))
-            end
-        end)
-    else
-        LookupPlate(plate, src, cam)
+    local dedupKey = tostring(src) .. ':' .. NormalizePlate(plate or '')
+    local nowMs = GetGameTimer()
+    if lockEventDedup[dedupKey] and (nowMs - lockEventDedup[dedupKey]) < 2000 then
+        return
     end
+    if lockEventDedupCount > 512 then
+        lockEventDedup, lockEventDedupCount = {}, 0
+    end
+    if not lockEventDedup[dedupKey] then lockEventDedupCount = lockEventDedupCount + 1 end
+    lockEventDedup[dedupKey] = nowMs
+
+    LookupPlate(plate, src, cam)
 end
 
 RegisterNetEvent('wk:onPlateLocked', HandlePlateLocked)
 
--- scan: local cache check only, never hits the API. flagged plates alert;
--- clean plates get a "not in system" payload. per-(src, plate) cooldown
--- throttles repeat reads.
 local scanProbeCount = 0
 
 RegisterNetEvent('wk:onPlateScanned', function(a, b, c)
@@ -301,7 +278,6 @@ RegisterNetEvent('wk:onPlateScanned', function(a, b, c)
 
     local src = source
 
-    -- plate-pattern emergency check first; needs no player vehicle match
     if Config.PlateReader.IgnoreEmergencyVehicles and MatchesEmergencyPlate(cleanPlate) then
         if Config.Debug then
             print(('[CDE-Wraith] scan filter: plate=%s skipped by EmergencyPlatePatterns'):format(cleanPlate))
@@ -309,8 +285,6 @@ RegisterNetEvent('wk:onPlateScanned', function(a, b, c)
         return
     end
 
-    -- player + emergency-vehicle filter; must run server-side since
-    -- wk_wars2x fires this event straight to the server
     local playerVerified = false
     if Config.PlateReader.OnlyPlayerPlates or Config.PlateReader.IgnoreEmergencyVehicles then
         local veh, ownerSrc = FindPlayerVehicleByPlate(cleanPlate)
@@ -323,7 +297,7 @@ RegisterNetEvent('wk:onPlateScanned', function(a, b, c)
             ))
         end
         if Config.PlateReader.OnlyPlayerPlates and not veh then
-            return -- not a player-driven vehicle, drop silently
+            return
         end
         if veh and Config.PlateReader.IgnoreEmergencyVehicles and IsEmergencyVehicle(veh) then
             if Config.Debug then
@@ -331,7 +305,7 @@ RegisterNetEvent('wk:onPlateScanned', function(a, b, c)
                     cleanPlate, tostring(GetEntityModel(veh))
                 ))
             end
-            return -- on-duty emergency vehicle, skip
+            return
         end
         playerVerified = veh ~= nil
     end
@@ -350,8 +324,6 @@ RegisterNetEvent('wk:onPlateScanned', function(a, b, c)
     local function fire(allowed)
         if not allowed then return end
 
-        -- throttle every scan response per (src, plate); wk_wars2x re-reads
-        -- a lingering plate many times per second
         local key = tostring(src) .. ':' .. cleanPlate
         local now = os.time()
         if scanResultCooldown[key] and (now - scanResultCooldown[key]) < SCAN_RESULT_COOLDOWN_S then
@@ -371,8 +343,6 @@ RegisterNetEvent('wk:onPlateScanned', function(a, b, c)
             return
         end
 
-        -- player-verified cache miss: registeredCache hit = clean,
-        -- miss = NOT REGISTERED caution
         if playerVerified then
             if registeredCache[cleanPlate] then
                 if Config.PlateReader.ShowCleanScans then
@@ -406,15 +376,9 @@ RegisterNetEvent('wk:onPlateScanned', function(a, b, c)
         }, cam)
     end
 
-    if Config.Permissions.RestrictToJobs and (Config.Permissions.UseQBCore or Config.Permissions.UseESX) then
-        TriggerEvent('cde-wraith:checkPermission', src, fire)
-    else
-        fire(true)
-    end
+    fire(true)
 end)
 
--- mirror fallback locks onto the wraith unit via wk's TogglePlateLock
--- export (1.3.x); pcall'd so builds without it still lock CAD-only
 RegisterNetEvent('cde-wraith:lockWkDisplay', function(cam)
     local src = source
     cam = cam == 'rear' and 'rear' or 'front'
@@ -423,11 +387,6 @@ RegisterNetEvent('cde-wraith:lockWkDisplay', function(cam)
     end)
 end)
 
--- =============================================================================
--- READER CONSOLE BATCH CHECK (display-only)
--- =============================================================================
--- batch cache reads for the in-car console, returned only to the asking
--- client. no popups, chat, or alerts.
 
 RegisterNetEvent('cdecad-reader:check', function(batch)
     local src = source
@@ -441,9 +400,12 @@ RegisterNetEvent('cdecad-reader:check', function(batch)
             local hit = flaggedCache[plate]
             local data
             if hit then
-                data = { success = true, found = true, plate = plate, alertLevel = hit.alertLevel, flags = hit.flags, cached = true }
+                data = { success = true, found = true, plate = plate, alertLevel = hit.alertLevel, flags = hit.flags, owner = hit.owner, dl = hit.dl, cached = true }
             elseif registeredCache[plate] then
-                data = { success = true, found = true, plate = plate, alertLevel = 'none', flags = {}, cached = true }
+                local reg = registeredCache[plate]
+                local owner, dl = nil, nil
+                if type(reg) == 'table' then owner, dl = reg.owner, reg.dl end
+                data = { success = true, found = true, plate = plate, alertLevel = 'none', flags = {}, owner = owner, dl = dl, cached = true }
             else
                 data = { success = true, found = false, plate = plate, cached = true }
             end
@@ -455,54 +417,43 @@ RegisterNetEvent('cdecad-reader:check', function(batch)
     end
 end)
 
--- =============================================================================
--- PERMISSION CHECK
--- =============================================================================
 
-AddEventHandler('cde-wraith:checkPermission', function(src, callback)
-    -- no framework restriction, allow everyone
-    if not Config.Permissions.RestrictToJobs then
-        callback(true)
-        return
-    end
+local plateDesignsPayload = nil
 
-    if Config.Permissions.UseQBCore then
-        local QBCore = exports['qb-core']:GetCoreObject()
-        local Player = QBCore.Functions.GetPlayer(src)
-        if Player then
-            local job = Player.PlayerData.job.name
-            for _, allowedJob in ipairs(Config.Permissions.AllowedJobs) do
-                if job == allowedJob then
-                    callback(true)
-                    return
-                end
-            end
+local function RefreshPlateDesigns()
+    if Config.API_URL == '' or Config.COMMUNITY_ID == '' then return end
+    local url = Config.API_URL .. '/civilian/fivem-plate-designs?communityId=' .. Config.COMMUNITY_ID
+    PerformHttpRequest(url, function(statusCode, responseText)
+        if statusCode ~= 200 or not responseText or responseText == '' then
+            DebugPrint('Plate designs refresh failed (status ' .. tostring(statusCode) .. ')')
+            return
         end
-        callback(false)
-
-    elseif Config.Permissions.UseESX then
-        local ESX = exports['es_extended']:getSharedObject()
-        local xPlayer = ESX.GetPlayerFromId(src)
-        if xPlayer then
-            local job = xPlayer.getJob().name
-            for _, allowedJob in ipairs(Config.Permissions.AllowedJobs) do
-                if job == allowedJob then
-                    callback(true)
-                    return
-                end
-            end
+        local ok, data = pcall(json.decode, responseText)
+        if not ok or type(data) ~= 'table' or not data.success then
+            DebugPrint('Plate designs refresh: bad response payload')
+            return
         end
-        callback(false)
+        local nDesigns, nPlates = 0, 0
+        for _ in pairs(data.plateDesigns or {}) do nDesigns = nDesigns + 1 end
+        for _ in pairs(data.designIdByPlate or {}) do nPlates = nPlates + 1 end
+        plateDesignsPayload = {
+            designs = data.plateDesigns or {},
+            byPlate = data.designIdByPlate or {},
+        }
+        print(('[CDE-Wraith] Custom plate designs loaded: %d design(s) across %d plate(s)'):format(nDesigns, nPlates))
+        TriggerClientEvent('cde-wraith:plateDesigns', -1, plateDesignsPayload)
+    end, 'GET', '', {
+        ['x-api-key'] = Config.API_KEY,
+    })
+end
 
-    else
-        -- no framework, allow all
-        callback(true)
+RegisterNetEvent('cde-wraith:getPlateDesigns', function()
+    local src = source
+    if plateDesignsPayload then
+        TriggerClientEvent('cde-wraith:plateDesigns', src, plateDesignsPayload)
     end
 end)
 
--- =============================================================================
--- COMMANDS
--- =============================================================================
 
 RegisterCommand('platelookup', function(source, args)
     if source == 0 then
@@ -521,7 +472,6 @@ RegisterCommand('platelookup', function(source, args)
     LookupPlate(plate, source, 'manual')
 end, false)
 
--- /cdewraithtest [plate] - run LookupPlate directly, bypassing wraith events
 RegisterCommand('cdewraithtest', function(source, args)
     local plate = args[1] or 'TEST123'
     print(('[CDE-Wraith] SELF-TEST invoked by source=%s plate=%s'):format(tostring(source), plate))
@@ -546,13 +496,13 @@ RegisterCommand('cdewraithplayers', function(source, args)
     for _, l in ipairs(lines) do print(l) end
 end, true)
 
--- admin: force-refresh the flagged-plates cache (useful after issuing a BOLO)
 RegisterCommand('cdewraithrefresh', function(source, args)
     if source ~= 0 and not IsPlayerAceAllowed(source, 'command.cdewraithrefresh') then
         return
     end
     print('[CDE-Wraith] Manual flagged-plates cache refresh requested')
     RebuildFlaggedCache()
+    RefreshPlateDesigns()
 end, true)
 
 RegisterCommand('cdewraithstatus', function(source, args)
@@ -568,13 +518,10 @@ RegisterCommand('cdewraithstatus', function(source, args)
     end
 end, true)
 
--- =============================================================================
--- CACHE CLEANUP (per-plate lookup cooldown)
--- =============================================================================
 
 CreateThread(function()
     while true do
-        Wait(300000) -- 5 minutes
+        Wait(300000)
         local now = os.time()
         local cleared = 0
         for k, v in pairs(plateCache) do
@@ -594,14 +541,12 @@ CreateThread(function()
     end
 end)
 
--- =============================================================================
--- STARTUP + FLAGGED-PLATES REFRESH
--- =============================================================================
 
 AddEventHandler('onResourceStart', function(resource)
     if resource ~= GetCurrentResourceName() then return end
     SetTimeout(3000, function()
         RebuildFlaggedCache()
+        RefreshPlateDesigns()
     end)
 end)
 
@@ -609,50 +554,78 @@ CreateThread(function()
     while true do
         Wait(CACHE_REFRESH_MS)
         RebuildFlaggedCache()
+        RefreshPlateDesigns()
     end
 end)
 
 print('[CDE-Wraith] Wraith ARS 2X <> CDECAD integration loaded')
 print('[CDE-Wraith] Debug: ' .. tostring(Config.Debug) ..
     ' | LookupOnLock: ' .. tostring(Config.PlateReader.LookupOnLock) ..
-    ' | LookupOnScan: ' .. tostring(Config.PlateReader.LookupOnScan) ..
-    ' | RestrictToJobs: ' .. tostring(Config.Permissions.RestrictToJobs))
+    ' | LookupOnScan: ' .. tostring(Config.PlateReader.LookupOnScan))
 print('[CDE-Wraith] Listening for wk:onPlateLocked (TriggerServerEvent from Wraith client)')
 print('[CDE-Wraith] Test: /cdewraithtest [plate] or /platelookup [plate]')
 
--- dependency probe: report whether wk_wars2x is present and started
 CreateThread(function()
-    Wait(2000) -- let all resources settle
+    Wait(2000)
     local state = GetResourceState('wk_wars2x')
     if state == 'started' then
         print('[CDE-Wraith] OK: wk_wars2x detected (state=started)')
 
-        -- check the running copy's files for the integration event; stale
-        -- or duplicate wk_wars2x folders may not emit it
         local ver  = GetResourceMetadata('wk_wars2x', 'version', 0)
         local path = GetResourcePath('wk_wars2x')
         print(('[CDE-Wraith] wk_wars2x version=%s'):format(tostring(ver)))
         print(('[CDE-Wraith] wk_wars2x path=%s'):format(tostring(path)))
 
-        local emits = false
+        local emitKind, emitFile = nil, nil
         local checked = false
         for _, f in ipairs({ 'cl_plate_reader.lua', 'cl_radar.lua', 'cl_reader.lua' }) do
-            local src = LoadResourceFile('wk_wars2x', f)
-            if src then
+            local body = LoadResourceFile('wk_wars2x', f)
+            if body then
                 checked = true
-                if src:find('wk:onPlateLocked', 1, true) then
-                    emits = true
-                    print(('[CDE-Wraith] RUNNING wk_wars2x: %s DOES emit wk:onPlateLocked'):format(f))
+                if body:find('TriggerServerEvent%s*%(%s*["\']wk:onPlateLocked') then
+                    emitKind, emitFile = 'server', f
                     break
+                elseif body:find('TriggerEvent%s*%(%s*["\']wk:onPlateLocked') then
+                    emitKind, emitFile = 'local', f
+                    break
+                elseif not emitKind and body:find('wk:onPlateLocked', 1, true) then
+                    emitKind, emitFile = 'mention', f
                 end
             end
         end
-        if not emits then
-            if checked then
-                print('[CDE-Wraith] !!! RUNNING wk_wars2x does NOT emit wk:onPlateLocked - the live copy is NOT the file you inspected (stale or duplicate folder). Native lock keys cannot reach the CAD on this build.')
-            else
-                print('[CDE-Wraith] Could not read the running wk_wars2x client files to verify the integration events.')
+        if emitKind == 'server' then
+            print(('[CDE-Wraith] RUNNING wk_wars2x: %s fires TriggerServerEvent("wk:onPlateLocked") - locks reach the CAD directly. A real lock MUST print ">>> PLATE LOCKED" in this console; if it does not, the client is running a different cached copy.'):format(emitFile))
+        elseif emitKind == 'local' then
+            print(('[CDE-Wraith] RUNNING wk_wars2x: %s fires wk:onPlateLocked as a CLIENT-LOCAL event - the CDECAD client bridge forwards it (watch for "[CDE-Wraith] bridging" in F8 on lock).'):format(emitFile))
+        elseif emitKind == 'mention' then
+            print(('[CDE-Wraith] !!! RUNNING wk_wars2x: %s MENTIONS wk:onPlateLocked but never fires it (commented out or modified). Locks CANNOT reach the CAD from this build - use /cdelockfront + /cdelockrear.'):format(emitFile))
+        elseif checked then
+            print('[CDE-Wraith] !!! RUNNING wk_wars2x does NOT emit wk:onPlateLocked - the live copy is NOT the file you inspected (stale or duplicate folder). Native lock keys reach the CAD only via seamless export polling (or /cdelockfront + /cdelockrear).')
+        else
+            print('[CDE-Wraith] Could not read the running wk_wars2x client files to verify the integration events.')
+        end
+
+        local exportNames = {}
+        local metaFiles = {}
+        for _, key in ipairs({ 'client_script', 'shared_script' }) do
+            local n = GetNumResourceMetadata('wk_wars2x', key) or 0
+            for i = 0, n - 1 do
+                metaFiles[#metaFiles + 1] = GetResourceMetadata('wk_wars2x', key, i)
             end
+        end
+        for _, f in ipairs(metaFiles) do
+            local body = LoadResourceFile('wk_wars2x', f)
+            if body then
+                for name in body:gmatch('exports%s*%(%s*["\']([%w_]+)["\']') do
+                    exportNames[#exportNames + 1] = name
+                end
+            end
+        end
+        if #exportNames > 0 then
+            print('[CDE-Wraith] wk_wars2x client exports: ' .. table.concat(exportNames, ', ') ..
+                ' (usable for Config.SeamlessLock overrides)')
+        else
+            print('[CDE-Wraith] wk_wars2x registers NO client exports - seamless lock polling cannot work on this build; use /cdelockfront + /cdelockrear (bindable in FiveM keybinds).')
         end
     else
         print(('[CDE-Wraith] WARNING: wk_wars2x is "%s" - cde-wraith will receive no plate events until it is started.'):format(state or 'missing'))
