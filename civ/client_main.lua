@@ -46,7 +46,8 @@ local function GetCurrentVehicleInfo()
         return nil
     end
 
-    -- Strip whitespace; the backend normalizes plates the same way
+    -- Always strip whitespace - the backend normalizes plates the same way so
+    -- the same vehicle can't be registered twice with different spacing.
     local plate = GetVehicleNumberPlateText(vehicle):gsub('%s+', '')
     local modelHash = GetEntityModel(vehicle)
     local spawnName = GetDisplayNameFromVehicleModel(modelHash) or ''
@@ -62,33 +63,6 @@ local function GetCurrentVehicleInfo()
         color = color,
         year = tostring(2020 + math.random(0, 5)) -- GTA doesn't expose a year; fake one
     }
-end
-
--- =============================================================================
--- FRAMEWORK CASH DETECTION
--- =============================================================================
-
--- Returns the player's current in-game cash, or nil if unknown.
-local function GetPlayerCash()
-    -- QBCore / QBox
-    if GetResourceState('qb-core') == 'started' then
-        local ok, QBCore = pcall(function() return exports['qb-core']:GetCoreObject() end)
-        if ok and QBCore then
-            local pd = QBCore.Functions.GetPlayerData()
-            if pd and pd.money then
-                return pd.money.cash or pd.money['cash'] or 0
-            end
-        end
-    end
-    -- ESX
-    if GetResourceState('es_extended') == 'started' then
-        local ok, ESX = pcall(function() return exports['es_extended']:getSharedObject() end)
-        if ok and ESX then
-            local pd = ESX.GetPlayerData()
-            if pd then return pd.money or 0 end
-        end
-    end
-    return nil -- framework not detected; server will handle validation
 end
 
 -- =============================================================================
@@ -235,8 +209,10 @@ end
 function SelectCivilian(civData)
     Debug('SelectCivilian called with:', json.encode(civData))
 
+    -- Clear old civilian first
     ActiveCivilian = nil
 
+    -- Set new civilian
     ActiveCivilian = civData
 
     -- Save to persistence
@@ -302,71 +278,13 @@ RegisterCommand(Config.Commands.ShowID, function()
         return
     end
 
-    -- Each viewer's NUI fetches the mugshot on demand
+    -- The NUI fetches the mugshot on-demand for everyone who views the card,
+    -- so no pre-fetch is needed here.
     TriggerServerEvent('cdecad-civmanager:showID')
 end, false)
 
--- /bank - Open bank panel
-RegisterCommand(Config.Commands.Bank, function()
-    if not Config.Bank.Enabled then
-        Notify('error', 'Bank is disabled')
-        return
-    end
-
-    if not ActiveCivilian then
-        Notify('error', 'No civilian selected. Use /' .. Config.Commands.SelectCiv)
-        return
-    end
-
-    local civId = ActiveCivilian.id or ActiveCivilian._id
-    if not civId then
-        Notify('error', 'Civilian ID not found. Please re-select your civilian.')
-        return
-    end
-
-    -- Request account data from server then open the bank UI
-    local result = lib.callback.await('cdecad-civmanager:getBankAccount', false, civId)
-
-    if not result or not result.success then
-        Notify('error', result and result.error or 'Failed to load bank account')
-        return
-    end
-
-    SetNuiFocus(true, true)
-    SendNUIMessage({
-        action = 'openBank',
-        account = result.account,
-        civilian = {
-            firstName = ActiveCivilian.firstName,
-            lastName = ActiveCivilian.lastName,
-            id = civId
-        },
-        communityId = Config.COMMUNITY_ID,
-        playerCash = GetPlayerCash()  -- may be nil if framework not detected
-    })
-end, false)
-
--- /adminbank - Open the admin bank panel (CAD authorizes bank employees only)
-RegisterCommand(Config.Commands.AdminBank or 'adminbank', function()
-    if not (Config.Bank and Config.Bank.AdminEnabled) then
-        Notify('error', 'Admin bank is disabled')
-        return
-    end
-
-    local result = lib.callback.await('cdecad-civmanager:adminBankAccess', false)
-    if not result or not result.success then
-        Notify('error', result and result.error or 'Access denied')
-        return
-    end
-
-    SetNuiFocus(true, true)
-    SendNUIMessage({
-        action = 'openAdminBank',
-        communityId = Config.COMMUNITY_ID,
-        accounts = result.accounts or {},
-        settings = result.settings or {}
-    })
-end, false)
+-- Banking (/bank and /adminbank) was removed from the in-game resource -
+-- accounts, transfers, loans and banker actions are all managed in the CAD.
 
 -- /regveh - Register current vehicle
 RegisterCommand(Config.Commands.RegisterVehicle, function()
@@ -375,7 +293,8 @@ RegisterCommand(Config.Commands.RegisterVehicle, function()
         return
     end
 
-    -- Block duplicate submissions while one is pending
+    -- Guard against the user spamming the command while a prior submission
+    -- is still awaiting a server response.
     if IsRegisteringVehicle then
         Notify('error', 'Registration already in progress')
         return
@@ -401,15 +320,16 @@ RegisterCommand(Config.Commands.RegisterVehicle, function()
         return
     end
 
-    -- Confirm registration
+    -- Confirm registration. No fee line: registration billing (if any) is the
+    -- CAD's concern - this resource never charged anything, and advertising a
+    -- fee it doesn't collect just confused players.
     local confirm = lib.alertDialog({
         header = 'Register Vehicle',
-        content = string.format('Register this vehicle?\n\n**Plate:** %s\n**Make:** %s\n**Model:** %s\n**Color:** %s\n\n**Fee:** $%d',
+        content = string.format('Register this vehicle?\n\n**Plate:** %s\n**Make:** %s\n**Model:** %s\n**Color:** %s',
             vehicleInfo.plate,
             vehicleInfo.make,
             vehicleInfo.model,
-            vehicleInfo.color,
-            Config.VehicleRegistration.Fee
+            vehicleInfo.color
         ),
         centered = true,
         cancel = true
@@ -474,10 +394,12 @@ RegisterNetEvent('cdecad-civmanager:receiveID', function(civData, fromName, card
     Debug('Received ID from:', fromName)
 
     if Config.IDCard.ShowHTML then
-        -- Render mode defaults to 'html' when LicenseMode is unset.
-        -- The NUI fetches the license image through /fetchLicensePng so the
-        -- x-api-key never reaches the browser.
+        -- Resolve render mode. Defaults to 'html' when the field is missing
+        -- so existing configs (pre-license-revamp) keep working unchanged.
         local mode = (Config.IDCard.LicenseMode or 'html'):lower()
+        -- We tell the NUI which mode + which civilian to render; the NUI
+        -- proxies the actual fetch through our resource server (so the
+        -- x-api-key never leaks into the browser) via /fetchLicensePng.
         local civId = civData.id or civData._id or ''
         SendNUIMessage({
             action      = 'showID',
@@ -485,8 +407,9 @@ RegisterNetEvent('cdecad-civmanager:receiveID', function(civData, fromName, card
             from        = fromName,
             duration    = Config.IDCard.DisplayDuration,
             style       = cardStyle or Config.IDCard.CardStyle,
-            -- 'template': image only; 'auto': image with fallback to the
-            -- styled card; 'html': styled card
+            -- 'template' → NUI MUST show the image; 'auto' → NUI tries the
+            -- image and silently falls back to the styled card on error;
+            -- 'html' → NUI renders the styled card as before.
             licenseMode = mode,
             civilianId  = civId,
             licenseType = 'drivers',
@@ -527,6 +450,7 @@ RegisterNetEvent('cdecad-civmanager:idRequested', function(requesterId, requeste
         return
     end
     
+    -- Show a confirmation dialog
     local confirm = lib.alertDialog({
         header = 'ID Requested',
         content = '**' .. requesterName .. '** is requesting to see your ID.\n\nShow your ID to them?',
@@ -594,10 +518,6 @@ exports('OpenCivilianSelector', OpenCivilianSelector)
 TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.SelectCiv, 'Select a civilian from your CAD account')
 TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.ShowInfo, 'Show your current civilian info')
 TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.ShowID, 'Show your ID to nearby players')
-TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.Bank, 'Open your bank account')
-if Config.Bank and Config.Bank.AdminEnabled and Config.Commands.AdminBank then
-    TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.AdminBank, 'Open the admin bank panel (bank employees only)')
-end
 TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.RegisterVehicle, 'Register your current vehicle')
 TriggerEvent('chat:addSuggestion', '/' .. Config.Commands.ClearCiv, 'Clear your civilian selection')
 
