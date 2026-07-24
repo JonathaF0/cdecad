@@ -17,8 +17,9 @@ RegisterNUICallback('getMugshot', function(data, cb)
     cb({ mugshotUrl = result and result.mugshotUrl or nil })
 end)
 
--- Proxy for the server-rendered license PNG; the server-side callback
--- fetches it with the API key and returns a base64 data URI.
+-- NUI proxy for the server-rendered license PNG. Keeps the x-api-key out
+-- of the browser context - the server-side callback fetches the PNG with
+-- the resource's key and returns it as a base64 data URI.
 RegisterNUICallback('fetchLicensePng', function(data, cb)
     local civilianId  = data and data.civilianId
     local licenseType = (data and data.licenseType) or 'drivers'
@@ -33,66 +34,5 @@ RegisterNUICallback('escape', function(data, cb)
     cb('ok')
 end)
 
--- =============================================================================
--- BANK NUI CALLBACKS
--- =============================================================================
-
--- Close bank panel
-RegisterNUICallback('closeBank', function(data, cb)
-    SetNuiFocus(false, false)
-    cb('ok')
-end)
-
--- Deposit
-RegisterNUICallback('bankDeposit', function(data, cb)
-    local result = lib.callback.await('cdecad-civmanager:bankDeposit', false,
-        data.civilianId, tonumber(data.amount), data.description)
-    cb(result)
-end)
-
--- Withdraw
-RegisterNUICallback('bankWithdraw', function(data, cb)
-    local result = lib.callback.await('cdecad-civmanager:bankWithdraw', false,
-        data.civilianId, tonumber(data.amount), data.description)
-    cb(result)
-end)
-
--- Transfer
-RegisterNUICallback('bankTransfer', function(data, cb)
-    local result = lib.callback.await('cdecad-civmanager:bankTransfer', false,
-        data.fromCivilianId, data.toAccountNumber, tonumber(data.amount), data.description)
-    cb(result)
-end)
-
--- =============================================================================
--- ADMIN BANK (BANK EMPLOYEE) NUI CALLBACKS
--- =============================================================================
-
--- Load a single account's full detail for the banker view
-RegisterNUICallback('bankerLoadAccount', function(data, cb)
-    local result = lib.callback.await('cdecad-civmanager:bankerLoadAccount', false, data.accountId)
-    cb(result)
-end)
-
--- Approve / deny a pending loan
-RegisterNUICallback('bankerLoanDecision', function(data, cb)
-    local result = lib.callback.await('cdecad-civmanager:bankerLoanDecision', false,
-        data.accountId, data.loanId, data.decision, data.reason)
-    cb(result)
-end)
-
--- Freeze / unfreeze / close an account
-RegisterNUICallback('bankerSetStatus', function(data, cb)
-    local result = lib.callback.await('cdecad-civmanager:bankerSetStatus', false,
-        data.accountId, data.status)
-    cb(result)
-end)
-
--- Teller adjust - deposit/withdraw/transfer on behalf of a customer
-RegisterNUICallback('bankerAdjust', function(data, cb)
-    local result = lib.callback.await('cdecad-civmanager:bankerAdjust', false,
-        data.accountId, data.action, tonumber(data.amount), data.description, data.recipientAccountNumber)
-    cb(result)
-end)
 
 end
