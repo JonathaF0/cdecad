@@ -1,10 +1,6 @@
 do
     local Config = DutyConfig
--- CDE Duty System - Client
 
--- ========================================
--- VARIABLES
--- ========================================
 local isOnDuty = false
 local currentJob = nil
 local currentDepartment = nil
@@ -16,20 +12,15 @@ local calloutSettings = {
 
 print("^2[CDE-DUTY] Client loading...^0")
 
--- ========================================
--- RADIO AGENCY HANDLERS (LOWERCASE)
--- ========================================
 
 RegisterNetEvent('CDE:SetRadioAgency')
 AddEventHandler('CDE:SetRadioAgency', function(agency)
     if agency then
-        -- Ensure lowercase for radio system
         agency = string.lower(agency)
         print("^3[CDE-DUTY] Setting radio agency: " .. agency .. "^0")
         
         ExecuteCommand("setradioagency " .. agency)
-
-        -- Also try the capitalized command variant
+        
         Citizen.SetTimeout(500, function()
             ExecuteCommand("setRadioAgency " .. agency)
         end)
@@ -50,29 +41,21 @@ AddEventHandler('CDE:SetRadioAgency', function(agency)
     end
 end)
 
--- ========================================
--- PAYCHECK HANDLER
--- ========================================
 
 RegisterNetEvent('CDE:ReceivePaycheck')
-AddEventHandler('CDE:ReceivePaycheck', function(amount)
-    -- Hook point for standalone/custom money systems
-
+AddEventHandler('CDE:ReceivePaycheck', function(amount, balance)
     SetNotificationTextEntry("STRING")
-    AddTextComponentString("~g~PAYCHECK~n~~w~+$" .. amount .. " added to cash")
+    local line = "~g~PAYCHECK~n~~w~+$" .. tostring(amount) .. " deposited to your CAD bank"
+    if balance then line = line .. "~n~~y~Balance: $" .. tostring(balance) end
+    AddTextComponentString(line)
     DrawNotification(false, true)
-    
-    -- Play sound
+
     PlaySoundFrontend(-1, "WAYPOINT_SET", "HUD_FRONTEND_DEFAULT_SOUNDSET", true)
 end)
 
--- ========================================
--- LEO STATUS FOR 911 SYSTEM
--- ========================================
 
 RegisterNetEvent('CDE:SetLEOStatus')
 AddEventHandler('CDE:SetLEOStatus', function(status)
-    -- LEO status from server; used by the CAD-911 system to prevent NPC reports
     if status then
         print("^2[CDE-DUTY] LEO status: Active^0")
     else
@@ -80,9 +63,6 @@ AddEventHandler('CDE:SetLEOStatus', function(status)
     end
 end)
 
--- ========================================
--- DUTY EVENT HANDLERS
--- ========================================
 
 RegisterNetEvent('CDE:UpdateCalloutSettings')
 AddEventHandler('CDE:UpdateCalloutSettings', function(settings)
@@ -103,14 +83,11 @@ AddEventHandler('CDE:ConfirmOnDutyDepartment', function(department, deptConfig)
     currentJob = deptConfig.type
     currentDepartment = department
     
-    -- Always give armor when going on duty
     local playerPed = PlayerPedId()
     SetPedArmour(playerPed, 100)
     
-    -- Give flares to all on-duty personnel
     GiveWeaponToPed(playerPed, GetHashKey("WEAPON_FLARE"), 20, false, false)
     
-    -- Give less-lethal weapons to LEO
     if deptConfig.type == "leo" then
         GiveWeaponToPed(playerPed, GetHashKey("weapon_lesslauncher"), 50, false, false)
         GiveWeaponToPed(playerPed, GetHashKey("weapon_beanbag"), 100, false, false)
@@ -124,20 +101,13 @@ AddEventHandler('CDE:ConfirmOnDutyDepartment', function(department, deptConfig)
         DrawNotification(false, false)
     end
     
-    -- Give department loadout
     if Config and Config.WeaponLoadouts then
-        if deptConfig.type == "leo" then
-            GiveDutyLoadout("leo")
-        elseif deptConfig.type == "fire" then
-            GiveDutyLoadout("fire")
-        end
+        GiveDutyLoadout(department or deptConfig.type)
     end
     
-    -- Notify 911 system if LEO
     if deptConfig.type == "leo" then
         TriggerEvent('CDE:SetLEOStatus', true)
         
-        -- Bodycam overlay notification (bodycam script handles the actual overlay)
         Citizen.SetTimeout(1000, function()
             TriggerEvent('chat:addMessage', {
                 color = {0, 255, 255},
@@ -160,7 +130,6 @@ AddEventHandler('CDE:ConfirmOffDuty', function()
     AddTextComponentString("~r~OFF DUTY~n~~y~Radio Cleared")
     DrawNotification(false, false)
     
-    -- Remove weapons if configured
     if Config and Config.Advanced and Config.Advanced.RemoveWeaponsOffDuty then
         RemoveAllPedWeapons(PlayerPedId(), false)
     end
@@ -168,20 +137,25 @@ AddEventHandler('CDE:ConfirmOffDuty', function()
     TriggerEvent('CDE:SetLEOStatus', false)
 end)
 
--- ========================================
--- 911 CALL RECEIVER
--- ========================================
+
+local function StripPostal(location)
+    if type(location) ~= 'string' then return location end
+    location = location:gsub("%s*%(%s*Postal%s+%d+%s*%)", "")
+    location = location:gsub("%s*%-%s*Postal%s+%d+", "")
+    location = location:gsub("%s*Postal%s+%d+", "")
+    return (location:gsub("%s+$", ""))
+end
 
 RegisterNetEvent('CDE:Receive911')
 AddEventHandler('CDE:Receive911', function(callData)
     if not isOnDuty then return end
-    
+
     lastCallData = callData
-    
-    -- Play sound
+
+    if calloutSettings.showCallouts == false then return end
+
     PlaySoundFrontend(-1, "CHALLENGE_UNLOCKED", "HUD_AWARDS", true)
     
-    -- Show notification
     local callPrefix = "911 DISPATCH"
     if callData.reportType then
         local types = {
@@ -202,8 +176,7 @@ AddEventHandler('CDE:Receive911', function(callData)
     if callData.location then
         local location = callData.location
         if not calloutSettings.showPostal then
-            location = string.gsub(location, "%s*%- Postal%s+%d+", "")
-            location = string.gsub(location, "%s*Postal%s+%d+", "")
+            location = StripPostal(location)
         end
         notifText = notifText .. "~n~~y~" .. location
     end
@@ -211,13 +184,12 @@ AddEventHandler('CDE:Receive911', function(callData)
     AddTextComponentString(notifText)
     DrawNotification(false, true)
     
-    -- Show in chat if enabled
     if calloutSettings.showCallouts then
         local details = ""
         if callData.location then
             local location = callData.location
             if not calloutSettings.showPostal then
-                location = string.gsub(location, "%s*%- Postal%s+%d+", "")
+                location = StripPostal(location)
             end
             details = "Location: " .. location
         end
@@ -232,19 +204,12 @@ AddEventHandler('CDE:Receive911', function(callData)
         })
     end
     
-    -- Set waypoint if coords provided
     if callData.coords and Config and Config.GPSRouting and Config.GPSRouting.AutoRoute then
         SetNewWaypoint(callData.coords.x, callData.coords.y)
         print("^2[911] GPS waypoint set^0")
     end
 end)
 
--- ========================================
--- WRAITH ARS 2X - TRAFFIC STOP (/ts)
--- ========================================
--- Track the most-recently locked plate from the Wraith plate reader so the
--- /ts command can attach the unit to a Traffic Stop call in CAD with the
--- correct vehicle.
 
 local lastLockedPlate = nil
 local lastLockedAt    = 0
@@ -258,9 +223,6 @@ local function StoreLockedPlate(cam, plate)
     lastLockedCam   = cam or 'manual'
 end
 
--- Wraith ARS 2X fires `wk:onPlateLocked` server-side; the duty server mirrors
--- it back via CDE:WraithPlateLocked. Both are listened to in case a Wraith
--- build also fires it client-side.
 RegisterNetEvent('wk:onPlateLocked')
 AddEventHandler('wk:onPlateLocked', function(cam, plate, index)
     StoreLockedPlate(cam, plate)
@@ -343,7 +305,6 @@ RegisterCommand('ts', function(source, args)
         return
     end
 
-    -- /ts <plate> overrides the Wraith-locked plate if provided
     local plate = args[1]
     if plate and plate ~= '' then
         plate = string.upper((plate:gsub('%s', '')))
@@ -433,20 +394,20 @@ AddEventHandler('CDE:TrafficStopResult', function(result)
     end
 end)
 
--- ========================================
--- WEAPON LOADOUT
--- ========================================
 
 function GiveDutyLoadout(loadoutType)
     if not Config or not Config.WeaponLoadouts then return end
     
     local playerPed = PlayerPedId()
     local loadout = Config.WeaponLoadouts[loadoutType]
-    
+
+    local hops = 0
     while type(loadout) == "string" do
+        hops = hops + 1
+        if hops > 10 then loadout = nil break end
         loadout = Config.WeaponLoadouts[loadout]
     end
-    
+
     if not loadout then return end
     
     SetEntityHealth(playerPed, loadout.health or 200)
@@ -464,7 +425,6 @@ function GiveDutyLoadout(loadoutType)
             end
         end
         
-        -- Always add flares if not already in loadout
         local hasFlares = false
         local hasLessLethal = false
         local hasBeanbag = false
@@ -484,7 +444,6 @@ function GiveDutyLoadout(loadoutType)
             print("^2[CDE-DUTY] Added flares^0")
         end
         
-        -- Add less-lethal weapons for LEO loadouts
         if loadoutType == "leo" or loadoutType == "swat" then
             if not hasLessLethal then
                 GiveWeaponToPed(playerPed, GetHashKey("weapon_lesslauncher"), 50, false, false)
@@ -500,11 +459,8 @@ function GiveDutyLoadout(loadoutType)
     end
 end
 
--- ========================================
--- TOGGLE COMMANDS
--- ========================================
 
-RegisterCommand('togglecallouts', function()
+RegisterCommand('dutycallouts', function()
     calloutSettings.showCallouts = not calloutSettings.showCallouts
     TriggerServerEvent('CDE:UpdateCalloutSettings', calloutSettings)
     
@@ -514,7 +470,7 @@ RegisterCommand('togglecallouts', function()
 end, false)
 
 RegisterCommand('callouts', function()
-    ExecuteCommand("togglecallouts")
+    ExecuteCommand("dutycallouts")
 end, false)
 
 RegisterCommand('togglepostal', function()
@@ -526,19 +482,12 @@ RegisterCommand('togglepostal', function()
     DrawNotification(false, false)
 end, false)
 
--- Alias intentionally NOT /postal: that clashes with the nearest-postal
--- resource's routing command on servers running both.
 RegisterCommand('cdepostal', function()
     ExecuteCommand("togglepostal")
 end, false)
 
--- ========================================
--- /p <postal> - GPS route to a postal code
--- ========================================
--- Reads postals.json straight from whichever postal resource is running,
--- so it works even when that resource doesn't provide its own routing.
 
-local postalDb = nil       -- { CODE = { x = .., y = .. } }
+local postalDb = nil
 local postalRouteBlip = nil
 
 local function PostalNotify(msg)
@@ -610,7 +559,6 @@ RegisterCommand('p', function(_, args)
     EndTextCommandSetBlipName(postalRouteBlip)
     PostalNotify("~g~Routing to postal ~w~" .. code)
 
-    -- Auto-clear once the player arrives
     Citizen.CreateThread(function()
         local myBlip = postalRouteBlip
         while postalRouteBlip == myBlip do
@@ -625,9 +573,6 @@ RegisterCommand('p', function(_, args)
     end)
 end, false)
 
--- ========================================
--- UTILITY COMMANDS
--- ========================================
 
 RegisterCommand('dutyinfo', function()
     print("^2[CDE-DUTY] Status:^0")
@@ -697,18 +642,40 @@ RegisterCommand('route911', function()
         DrawNotification(false, false)
         return
     end
-    
-    if lastCallData and lastCallData.coords then
-        SetNewWaypoint(lastCallData.coords.x, lastCallData.coords.y)
-        SetNotificationTextEntry("STRING")
-        AddTextComponentString("~g~GPS set to last 911")
-        DrawNotification(false, false)
-    else
-        SetNotificationTextEntry("STRING")
-        AddTextComponentString("~y~No recent 911 calls")
-        DrawNotification(false, false)
-    end
+
+    TriggerServerEvent('CDE:RequestRoute911')
 end, false)
+
+local function RouteToCoords(x, y, location)
+    SetNewWaypoint(x, y)
+    SetNotificationTextEntry("STRING")
+    local msg = "~g~GPS set to last 911"
+    if type(location) == 'string' and location ~= '' and location ~= 'Unknown' then
+        msg = msg .. "~n~~w~" .. location
+    end
+    AddTextComponentString(msg)
+    DrawNotification(false, false)
+end
+
+RegisterNetEvent('CDE:Route911Result')
+AddEventHandler('CDE:Route911Result', function(res)
+    if res and res.success and res.coords
+       and type(res.coords.x) == 'number' and type(res.coords.y) == 'number' then
+        RouteToCoords(res.coords.x, res.coords.y, res.location)
+        return
+    end
+
+    local lc = lastCallData and lastCallData.coords
+    if lc and type(lc.x) == 'number' and type(lc.y) == 'number'
+       and (lc.x ~= 0 or lc.y ~= 0) then
+        RouteToCoords(lc.x, lc.y, lastCallData.location)
+        return
+    end
+
+    SetNotificationTextEntry("STRING")
+    AddTextComponentString("~y~No recent 911 calls")
+    DrawNotification(false, false)
+end)
 
 RegisterCommand('cleargps', function()
     DeleteWaypoint()
@@ -717,9 +684,6 @@ RegisterCommand('cleargps', function()
     DrawNotification(false, false)
 end, false)
 
--- ========================================
--- EXPORTS
--- ========================================
 
 exports('IsOnDutyLEO', function()
     return isOnDuty and currentJob == "leo"
@@ -737,9 +701,6 @@ exports('GetDutyStatus', function()
     }
 end)
 
--- ========================================
--- INITIALIZATION
--- ========================================
 
 Citizen.CreateThread(function()
     while not NetworkIsPlayerActive(PlayerId()) do
@@ -756,7 +717,7 @@ Citizen.CreateThread(function()
     print("^2========================================^0")
     print("^2Commands:^0")
     print("  /d [dept/off] - Toggle duty")
-    print("  /togglecallouts - Toggle 911 in chat")
+    print("  /dutycallouts - Toggle 911 in chat")
     print("  /togglepostal - Toggle postal codes")
     print("  /loadout [swat/standard] - Change loadout")
     print("  /dutyinfo - Check status")
@@ -771,17 +732,29 @@ Citizen.CreateThread(function()
     print("^2========================================^0")
 end)
 
--- Chat suggestions
+local function buildDeptHelp()
+    if not Config or not Config.Departments then
+        return "department/off"
+    end
+    local keys = {}
+    for k in pairs(Config.Departments) do keys[#keys + 1] = k end
+    table.sort(keys)
+    keys[#keys + 1] = "off"
+    return table.concat(keys, "/")
+end
+
 Citizen.CreateThread(function()
+    local deptHelp = buildDeptHelp()
+
     TriggerEvent('chat:addSuggestion', '/d', 'Toggle duty', {
-        { name = "department", help = "sasp/lcso/lspd/bcso/lsfd/bcfd/off" }
+        { name = "department", help = deptHelp }
     })
-    
+
     TriggerEvent('chat:addSuggestion', '/duty', 'Toggle duty', {
-        { name = "department", help = "sasp/lcso/lspd/bcso/lsfd/bcfd/off" }
+        { name = "department", help = deptHelp }
     })
     
-    TriggerEvent('chat:addSuggestion', '/togglecallouts', 'Toggle 911 in chat')
+    TriggerEvent('chat:addSuggestion', '/dutycallouts', 'Toggle 911 in chat')
     TriggerEvent('chat:addSuggestion', '/callouts', 'Toggle 911 in chat')
     
     TriggerEvent('chat:addSuggestion', '/togglepostal', 'Toggle postal codes')
