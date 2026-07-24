@@ -1,7 +1,5 @@
 do
     local Config = TabletConfig
--- client/main.lua
--- CAD Tablet & Call Details Popup
 
 local tabletOpen    = false
 local popupVisible  = false
@@ -10,17 +8,16 @@ local callIndex     = 1
 local lastOpenTime  = 0
 local openDebounce  = 500
 local tabletProp    = nil
+local openGen       = 0
 
 local TABLET_ANIM_DICT = "amb@code_human_in_bus_passenger_idles@female@tablet@base"
 local TABLET_ANIM_NAME = "base"
 local TABLET_PROP_MODEL = "prop_cs_tablet"
 
--- ─── Debug helper ────────────────────────────────────────────────────────────
 local function dbg(msg)
     print("^5[CAD-TABLET] " .. msg .. "^0")
 end
 
--- ─── Duty check (Standalone / CDE) ──────────────────────────────────────────
 local function isOnDuty()
     if not Config.RequireOnDuty then return true end
     if not Config.Framework.Standalone then return true end
@@ -38,7 +35,6 @@ local function isOnDuty()
     return ok2 and isLEO or false
 end
 
--- ─── Tablet open / close ─────────────────────────────────────────────────────
 local function cleanupProp()
     local ped = PlayerPedId()
     ClearPedTasks(ped)
@@ -49,8 +45,6 @@ local function cleanupProp()
 end
 
 local function closeTablet()
-    -- Always release NUI focus even if the tablet is already flagged closed;
-    -- the close callback can race the JS-side hide.
     dbg("closeTablet() called (was open=" .. tostring(tabletOpen) .. ")")
 
     cleanupProp()
@@ -60,6 +54,7 @@ local function closeTablet()
     SendNUIMessage({ type = "closeTablet" })
 
     tabletOpen = false
+    openGen = (openGen or 0) + 1
     lastOpenTime = GetGameTimer()
 
     dbg("Tablet closed")
@@ -72,18 +67,23 @@ local function openTablet()
         return
     end
 
-    -- Debounce rapid toggles
     if (GetGameTimer() - lastOpenTime) < openDebounce then return end
 
     dbg("openTablet() called")
     tabletOpen = true
     lastOpenTime = GetGameTimer()
+    openGen = (openGen or 0) + 1
+    local myGen = openGen
 
-    -- Play tablet animation and attach prop
     local ped = PlayerPedId()
     RequestAnimDict(TABLET_ANIM_DICT)
     while not HasAnimDictLoaded(TABLET_ANIM_DICT) do
         Citizen.Wait(100)
+    end
+
+    if openGen ~= myGen or not tabletOpen then
+        dbg("openTablet aborted (superseded during anim load)")
+        return
     end
 
     tabletProp = CreateObject(GetHashKey(TABLET_PROP_MODEL), 0, 0, 0, true, true, true)
@@ -96,9 +96,13 @@ local function openTablet()
     TaskPlayAnim(ped, TABLET_ANIM_DICT, TABLET_ANIM_NAME, 8.0, -8.0, -1, 50, 0, false, false, false)
 
     Citizen.Wait(200)
-    SendNUIMessage({ type = "openTablet", url = Config.TabletURL, dimmer = Config.TabletDimmer })
+    if openGen ~= myGen or not tabletOpen then
+        dbg("openTablet aborted (superseded during settle wait)")
+        cleanupProp()
+        return
+    end
+    SendNUIMessage({ type = "openTablet", url = Config.TabletURL, dimmer = Config.TabletDimmer, unloadAfter = Config.TabletUnloadAfter or 300 })
     SetNuiFocus(true, true)
-    -- Exclusive focus; ESC is captured by the JS keydown listener in html/script.js.
     SetNuiFocusKeepInput(false)
 
     dbg("Tablet opened")
@@ -109,7 +113,6 @@ local function toggleTablet()
     if tabletOpen then closeTablet() else openTablet() end
 end
 
--- ─── Call popup ──────────────────────────────────────────────────────────────
 local function showPopup()
     if popupVisible then return end
     popupVisible = true
@@ -129,7 +132,6 @@ local function togglePopup()
     if popupVisible then hidePopup() else showPopup() end
 end
 
--- ─── Receive call data from server ───────────────────────────────────────────
 RegisterNetEvent('cad-tablet:receiveCalls')
 AddEventHandler('cad-tablet:receiveCalls', function(calls)
     callData = calls or {}
@@ -144,7 +146,6 @@ AddEventHandler('cad-tablet:receiveCalls', function(calls)
     })
 end)
 
--- ─── Polling thread - only runs while popup is visible ───────────────────────
 local function startPolling()
     Citizen.CreateThread(function()
         while popupVisible do
@@ -162,7 +163,6 @@ showPopup = function()
     startPolling()
 end
 
--- ─── NUI callbacks ───────────────────────────────────────────────────────────
 RegisterNUICallback('closeTablet', function(_, cb)
     dbg("NUI callback: closeTablet")
     closeTablet()
@@ -200,8 +200,6 @@ RegisterNUICallback('closePopup', function(_, cb)
     cb('ok')
 end)
 
--- ─── Commands ────────────────────────────────────────────────────────────────
--- 'tablet' and 'cad' both toggle so existing keybinds keep working.
 RegisterCommand('tablet', function()
     dbg("Command 'tablet' fired")
     toggleTablet()
@@ -214,13 +212,25 @@ end, false)
 
 RegisterKeyMapping('tablet', Config.TabletDescription, 'keyboard', Config.TabletKey)
 
--- Hard-reload the CAD iframe in-place
 RegisterCommand('cadrefresh', function()
     dbg("Command 'cadrefresh' fired")
     SendNUIMessage({ type = "reloadTablet" })
 end, false)
 
--- Emergency reset command
+RegisterCommand('tabletmove', function()
+    dbg("Command 'tabletmove' fired")
+    if not tabletOpen then toggleTablet() end
+    SendNUIMessage({ type = "tabletMoveHint" })
+end, false)
+TriggerEvent('chat:addSuggestion', '/tabletmove', 'Open the tablet and show the move/resize handles')
+
+RegisterCommand('tabletreset', function()
+    dbg("Command 'tabletreset' fired")
+    SendNUIMessage({ type = "tabletResetLayout" })
+    TriggerEvent('chat:addMessage', { args = { '^3[CAD]', 'Tablet layout reset to default.' } })
+end, false)
+TriggerEvent('chat:addSuggestion', '/tabletreset', 'Reset the tablet to its default size and position')
+
 RegisterCommand('resetcad', function()
     dbg("Emergency reset triggered")
     cleanupProp()
@@ -240,8 +250,6 @@ if Config.EnableCallPopup then
     RegisterKeyMapping('cad_popup', Config.CallPopupDescription, 'keyboard', Config.CallPopupKey)
 end
 
--- ─── Main control thread ─────────────────────────────────────────────────────
--- ESC is handled in JS (html/script.js); close the tablet if the player dies.
 Citizen.CreateThread(function()
     while true do
         Citizen.Wait(0)
@@ -256,7 +264,6 @@ Citizen.CreateThread(function()
     end
 end)
 
--- ─── Cleanup ─────────────────────────────────────────────────────────────────
 AddEventHandler('onResourceStop', function(res)
     if GetCurrentResourceName() ~= res then return end
     cleanupProp()
@@ -268,8 +275,6 @@ AddEventHandler('onResourceStop', function(res)
     end
 end)
 
--- ─── Optional: Location Tracking ─────────────────────────────────────────────
--- Pushes on-duty player coords to /api/dispatch/location-update on a timer.
 
 local LEO_JOBS = {
     leo = true, police = true, sheriff = true, trooper = true,
@@ -320,38 +325,6 @@ local function getDutyFromCDE()
     return { onDuty = false }
 end
 
-local function getDutyFromESX()
-    if GetResourceState('es_extended') ~= 'started' then return nil end
-    local ok, ESX = pcall(function() return exports['es_extended']:getSharedObject() end)
-    if not ok or not ESX then return nil end
-    local pd = ESX.GetPlayerData and ESX.GetPlayerData()
-    if pd and pd.job and pd.job.name then
-        return {
-            onDuty     = true,
-            department = pd.job.name,
-            job        = pd.job.name,
-            status     = 'In Service',
-        }
-    end
-    return { onDuty = false }
-end
-
-local function getDutyFromQBCore()
-    if GetResourceState('qb-core') ~= 'started' then return nil end
-    local ok, QBCore = pcall(function() return exports['qb-core']:GetCoreObject() end)
-    if not ok or not QBCore then return nil end
-    local pd = QBCore.Functions and QBCore.Functions.GetPlayerData()
-    if pd and pd.job and pd.job.name and pd.job.onduty then
-        return {
-            onDuty     = true,
-            department = pd.job.name,
-            job        = pd.job.name,
-            status     = 'In Service',
-        }
-    end
-    return { onDuty = false }
-end
-
 local function getDutyFromCAD()
     return {
         onDuty     = cadActiveCache.active == true,
@@ -364,11 +337,8 @@ end
 local function resolveDutyState()
     local src = (Config.LocationTracking and Config.LocationTracking.DutySource) or 'auto'
     if src == 'cde_duty' then return getDutyFromCDE() or { onDuty = false } end
-    if src == 'esx'      then return getDutyFromESX() or { onDuty = false } end
-    if src == 'qbcore'   then return getDutyFromQBCore() or { onDuty = false } end
     if src == 'cad'      then return getDutyFromCAD() end
-    -- auto: first source that returns a usable result
-    return getDutyFromCDE() or getDutyFromESX() or getDutyFromQBCore() or getDutyFromCAD()
+    return getDutyFromCDE() or getDutyFromCAD()
 end
 
 local function getDistance(a, b)
@@ -399,7 +369,6 @@ local function pushLocation(coords, duty)
     trackingState.lastSent = GetGameTimer()
 end
 
--- Latest CAD active-state, pushed from the server
 RegisterNetEvent('cad-tablet:cadActiveResult')
 AddEventHandler('cad-tablet:cadActiveResult', function(data)
     cadActiveCache.active     = data and data.active == true
@@ -411,10 +380,8 @@ AddEventHandler('cad-tablet:cadActiveResult', function(data)
         .. ", dept=" .. tostring(cadActiveCache.department))
 end)
 
--- Push thread - only created when tracking is enabled
 if Config.LocationTracking and Config.LocationTracking.Enabled then
     Citizen.CreateThread(function()
-        -- Wait for resource init / framework load
         Citizen.Wait(5000)
 
         if GetResourceState('cde_lm') == 'started' then
@@ -451,7 +418,6 @@ if Config.LocationTracking and Config.LocationTracking.Enabled then
         end
     end)
 
-    -- CAD active-state poller (only when DutySource needs it)
     Citizen.CreateThread(function()
         local src = Config.LocationTracking.DutySource or 'auto'
         if src ~= 'cad' and src ~= 'auto' then return end
@@ -464,7 +430,6 @@ if Config.LocationTracking and Config.LocationTracking.Enabled then
     end)
 end
 
--- ─── Init ────────────────────────────────────────────────────────────────────
 Citizen.CreateThread(function()
     SetNuiFocus(false, false)
     Citizen.Wait(500)
