@@ -1,11 +1,14 @@
 do
     local Config = PanicConfig
 
-    Config.CadUrl      = GetConvar('CDE_CAD_API_URL', '')
+    Config.CadUrl      = GetConvar('CDE_CAD_API_URL', ''):gsub('/$', ''):gsub('/[Aa][Pp][Ii]$', '')
     Config.ApiKey      = GetConvar('CDE_CAD_API_KEY', '')
     Config.ServerName  = GetConvar('CDE_CAD_SERVER_NAME', 'My Server')
     Config.CommunityID = GetConvar('CDE_CAD_COMMUNITY_ID', '')
-local cooldowns = {}  -- { [serverId] = timestamp }
+
+local cooldowns = {}
+
+
 local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 local function base64Encode(data)
     return ((data:gsub('.', function(x)
@@ -51,7 +54,7 @@ end
 local function GetPlayerNameSafe(src)
     return GetPlayerName(src) or ('Player ' .. src)
 end
-  
+
 local function IsOnDutyLEO(src)
     local ok, res = pcall(function()
         return exports['CDECAD']:IsPlayerOnDutyLEO(src)
@@ -59,12 +62,9 @@ local function IsOnDutyLEO(src)
     if ok and res ~= nil then
         return res and true or false
     end
-    return true
+    return false
 end
 
---- Returns the list of server IDs that should receive the panic alert.
---- When BroadcastToLEOOnly is on, only on-duty LEOs are notified; otherwise
---- everyone (nil => -1) receives it.
 local function GetPanicRecipients()
     if Config.BroadcastToLEOOnly then
         local ok, units = pcall(function()
@@ -77,13 +77,13 @@ local function GetPanicRecipients()
     return nil
 end
 
--- ─── Panic Event from Client ────────────────────────────────────
 
 RegisterNetEvent('cdecad-panic:activate')
 AddEventHandler('cdecad-panic:activate', function(data)
     local src = source
     local now = os.time()
-    data = data or {} 
+    data = data or {}
+
     if Config.RequireOnDutyLEO and not IsOnDutyLEO(src) then
         if Config.Debug then
             print(('[cdecad-panic] Rejected panic from %s [%d]: not an on-duty LEO'):format(
@@ -92,7 +92,6 @@ AddEventHandler('cdecad-panic:activate', function(data)
         return
     end
 
-    -- Server-side cooldown enforcement (prevents spam exploits)
     if cooldowns[src] and (now - cooldowns[src]) < Config.CooldownSeconds then
         return
     end
@@ -108,6 +107,7 @@ AddEventHandler('cdecad-panic:activate', function(data)
     end
 
     print(('[cdecad-panic] PANIC activated by %s [%d] at %s'):format(playerName, src, location))
+
     local payload = {
         serverId = src,
         name     = playerName,
@@ -126,7 +126,6 @@ AddEventHandler('cdecad-panic:activate', function(data)
         TriggerClientEvent('cdecad-panic:broadcast', -1, payload)
     end
 
-    -- 2. Send panic to CAD
     CadRequest('panic', {
         officerName = playerName,
         officerId   = GetPlayerIdentifierByType(src, 'license') or nil,
@@ -137,9 +136,25 @@ AddEventHandler('cdecad-panic:activate', function(data)
         communityId = Config.CommunityID ~= '' and Config.CommunityID or nil,
     })
 
-    -- 3. Auto-generate 911 call in CAD
     if Config.Auto911 then
         local description = ('PANIC BUTTON activated by %s at %s'):format(playerName, location)
+
+        local officerPhone = nil
+        if GetResourceState('lb-phone') == 'started' then
+            local ok, num = pcall(function()
+                return exports['lb-phone']:GetEquippedPhoneNumber(src)
+            end)
+            if ok and type(num) == 'string' and num ~= '' then officerPhone = num end
+        end
+        if not officerPhone then
+            local ok, civ = pcall(function()
+                return exports[GetCurrentResourceName()]:GetActiveCivilian(src)
+            end)
+            if ok and type(civ) == 'table' then
+                local phone = civ.phone or civ.secondaryPhone
+                if type(phone) == 'string' and phone ~= '' then officerPhone = phone end
+            end
+        end
 
         CadRequest('911', {
             callType    = Config.Auto911CallType,
@@ -147,6 +162,7 @@ AddEventHandler('cdecad-panic:activate', function(data)
             postal      = postal,
             coordinates = coords,
             callerName  = Config.Auto911Caller,
+            callerNumber = officerPhone,
             serverName  = Config.ServerName,
             description = description,
             communityId = Config.CommunityID ~= '' and Config.CommunityID or nil,
@@ -158,7 +174,6 @@ AddEventHandler('cdecad-panic:activate', function(data)
     end
 end)
 
--- ─── Cleanup on Player Drop ─────────────────────────────────────
 
 AddEventHandler('playerDropped', function()
     cooldowns[source] = nil
