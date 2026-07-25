@@ -1,4 +1,4 @@
-# Configuring CDECAD FiveM Scripts
+# Configuring [CDECAD](https://cdecad.com) FiveM Scripts
 
 Everything sensitive (API keys, backend URL, community ID, Discord webhooks) is set with server **convars** in `server.cfg`. The `.lua` config files in each resource hold only operational values (commands, departments, cooldowns, etc.) and are safe to ship to clients.
 
