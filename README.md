@@ -132,7 +132,6 @@ Cameras also sync up to the web ALPR panel in the CAD, so dispatch can see them 
 ## Notes
 
 - Don't run the standalone modules (`cad-tablet`, `CDE_Duty`, `cde-civ-sa`, `cad-911`, `cde-wraith`, `cde-ers`) next to the bundle for the same feature. Duplicate event handlers lead to unpredictable behaviour.
-- See [`../CONFIGURING.md`](../CONFIGURING.md) for the full convar reference and key-rotation guidance.
 
 ## Troubleshooting
 
