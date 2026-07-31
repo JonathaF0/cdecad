@@ -8,7 +8,7 @@ CDECAD runs standalone on any server. It talks only to your CDE CAD backend over
 
 If you run a framework and want its **characters and vehicles** to show up in the CAD automatically, add one more resource:
 
-- **[`cde-cad-sync`](../cde-cad-sync)** auto-detects ESX / QBCore / QBox / NAT2k15 / vRP at runtime and syncs characters (on create, load, update, delete) and vehicle registrations into the CAD. It replaces the older per-framework `cde-cad-{esx,qbcore,qbox,nat2k15,vrp}` resources.
+- **[`cde-cad-sync`](https://github.com/JonathaF0/cdecad-sync)** auto-detects ESX / QBCore / QBox / NAT2k15 / vRP at runtime and syncs characters (on create, load, update, delete) and vehicle registrations into the CAD. It replaces the older per-framework `cde-cad-{esx,qbcore,qbox,nat2k15,vrp}` resources.
 
 So the full picture is simple: every server runs `CDECAD`, and framework servers also run `cde-cad-sync`. The two don't talk to each other, they just point at the same CAD backend. See [`../CONFIGURING.md`](../CONFIGURING.md) for the sync resource's convars.
 
