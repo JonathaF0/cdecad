@@ -4,12 +4,9 @@ do
 
     local ALPR = Config.ALPR
 
-
     local CadUrl = GetConvar('CDE_CAD_API_URL', ''):gsub('/$', ''):gsub('/[Aa][Pp][Ii]$', '')
     local ApiKey = GetConvar('CDE_CAD_API_KEY', '')
     local CommunityId = GetConvar('CDE_CAD_COMMUNITY_ID', '')
-
-
     local b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
     local function base64Encode(data)
         return ((data:gsub('.', function(x)
@@ -69,7 +66,6 @@ do
             ['x-api-key']    = ApiKey,
         })
     end
-
     local RES = GetCurrentResourceName()
     local function IsOnDutyLEO(src)
         local ok, res = pcall(function()
@@ -80,9 +76,7 @@ do
         end
         return true
     end
-
-
-    local flaggedCache = {}
+    local flaggedCache = {}       
     local flaggedCacheCount = 0
     local flaggedCacheGeneratedAt = nil
 
@@ -106,9 +100,17 @@ do
             for _, entry in ipairs(data.plates) do
                 local plate = NormalizePlate(entry.plate)
                 if plate ~= '' then
+                    local camScope = nil
+                    if type(entry.hotCamIds) == 'table' and #entry.hotCamIds > 0 then
+                        camScope = {}
+                        for _, cid in ipairs(entry.hotCamIds) do
+                            camScope[tonumber(cid) or -1] = true
+                        end
+                    end
                     newCache[plate] = {
                         flags = entry.flags or {},
                         alertLevel = entry.alertLevel or 'caution',
+                        hotCamScope = camScope,
                     }
                     count = count + 1
                 end
@@ -123,9 +125,8 @@ do
         })
     end
 
-
     local KVP_KEY = 'cdecad_alpr_cameras'
-    local cameras = {}
+    local cameras = {}   
     local nextId = 1
 
     local function SaveCameras()
@@ -154,8 +155,6 @@ do
     local function BroadcastCameras(target)
         TriggerClientEvent('cdecad-alpr:sync', target or -1, cameras)
     end
-
-
     local HOTLIST_KEY = 'cdecad_alpr_hotlist'
     local hotlist = {}
 
@@ -169,8 +168,6 @@ do
         local ok, data = pcall(json.decode, raw)
         if ok and type(data) == 'table' then hotlist = data end
     end
-
-
     local camSyncFailed = false
 
     local function SyncCamerasToCad()
@@ -184,7 +181,6 @@ do
             end
         end)
     end
-
     CreateThread(function()
         local sinceFull = 0
         while true do
@@ -198,21 +194,17 @@ do
             end
         end
     end)
-
     local function CommitCameras()
         SaveCameras()
         BroadcastCameras()
         SyncCamerasToCad()
     end
-
-
     local function FindCamera(camId)
         for _, c in ipairs(cameras) do
             if c.id == camId then return c end
         end
         return nil
     end
-
     local SEVERITY_KEY = 'cdecad_alpr_severity'
     local severityOverride = nil
 
@@ -228,7 +220,6 @@ do
     local function BroadcastMeta(target)
         TriggerClientEvent('cdecad-alpr:meta', target or -1, { severity = CurrentSeverity() })
     end
-
     local function PassesSeverity(hit)
         if type(ALPR.AlertFlags) == 'table' and #ALPR.AlertFlags > 0 then
             for _, f in ipairs(hit.flags or {}) do
@@ -244,7 +235,6 @@ do
         end
         return true
     end
-
     local function AlertOfficers(payload)
         local A = ALPR.Alerts
         if not A or not A.Enabled then return end
@@ -261,10 +251,8 @@ do
         end
         TriggerClientEvent('cdecad-alpr:hitAlert', -1, payload)
     end
-
     local function PickPhotoReporter(cam, plate, fallbackSrc)
         local camPos = vector3(cam.x, cam.y, cam.z)
-
         local offenderSrc = nil
         for _, pid in ipairs(GetPlayers()) do
             local src = tonumber(pid)
@@ -301,7 +289,6 @@ do
         if pick then return pick, true end
         return offenderSrc or fallbackSrc, false
     end
-
     local function RecordHit(cam, data, incidentNumber, reporterSrc)
         CadPost('alpr/hit', {
             camId       = cam.id,
@@ -348,15 +335,12 @@ do
             end
         end)
     end
-
     RegisterNetEvent('cdecad-alpr:photoResult')
     AddEventHandler('cdecad-alpr:photoResult', function(result)
         local src = source
         print(('[cad-alpr] photo result from %s: %s'):format(
             GetPlayerName(src) or tostring(src), tostring(result):sub(1, 200)))
     end)
-
-
     RegisterNetEvent('cdecad-alpr:place')
     AddEventHandler('cdecad-alpr:place', function(cam)
         local src = source
@@ -367,13 +351,11 @@ do
         if type(cam) ~= 'table' then return end
         local cx, cy, cz = tonumber(cam.x), tonumber(cam.y), tonumber(cam.z)
         if not cx or not cy or not cz then return end
-
         local maxCams = tonumber(ALPR.MaxCameras) or 50
         if #cameras >= maxCams then
             TriggerClientEvent('chat:addMessage', src, { args = { '^1[ALPR]', ('Camera limit reached (%d). Remove one first.'):format(maxCams) } })
             return
         end
-
         local propModel = (ALPR.Prop and ALPR.Prop.Model) or nil
         if cam.prop and ALPR.Prop and type(ALPR.Prop.Models) == 'table' then
             for _, m in ipairs(ALPR.Prop.Models) do
@@ -410,7 +392,7 @@ do
         end
         if type(coords) ~= 'table' or not coords.x then return end
 
-        local bestIdx, bestDist = nil, 12.0
+        local bestIdx, bestDist = nil, 12.0  -- must be within 12m of a camera
         for i, c in ipairs(cameras) do
             local dx, dy = c.x - coords.x, c.y - coords.y
             local d = math.sqrt(dx * dx + dy * dy)
@@ -426,8 +408,6 @@ do
             args = { '^2[ALPR]', ('Removed camera #%d (%s).'):format(removed.id, removed.label) }
         })
     end)
-
-
     local function LEOGate(src, action)
         if ALPR.RequireOnDutyLEO and not IsOnDutyLEO(src) then
             TriggerClientEvent('chat:addMessage', src, { args = { '^1[ALPR]', 'Only on-duty LEOs can ' .. action .. ' cameras.' } })
@@ -467,7 +447,6 @@ do
             args = { '^2[ALPR]', ('Camera #%d is now %s.'):format(cam.id, cam.enabled and 'ENABLED' or 'DISABLED') }
         })
     end)
-
     RegisterNetEvent('cdecad-alpr:flip')
     AddEventHandler('cdecad-alpr:flip', function(camId)
         local src = source
@@ -536,7 +515,6 @@ do
             args = { '^2[ALPR]', ('Camera #%d moved to %s.'):format(cam.id, cam.label) }
         })
     end)
-
     RegisterNetEvent('cdecad-alpr:refresh')
     AddEventHandler('cdecad-alpr:refresh', function()
         local src = source
@@ -546,7 +524,6 @@ do
             args = { '^2[ALPR]', 'Flagged-plate cache refreshing from the CAD - new stolen/BOLO markings apply in a few seconds.' }
         })
     end)
-
     RegisterNetEvent('cdecad-alpr:severity')
     AddEventHandler('cdecad-alpr:severity', function()
         local src = source
@@ -560,8 +537,6 @@ do
                 or 'Alert filter: ALL FLAGS (every flagged plate fires).' }
         })
     end)
-
-
     RegisterNetEvent('cdecad-alpr:watch')
     AddEventHandler('cdecad-alpr:watch', function(action, plate, reason)
         local src = source
@@ -593,7 +568,7 @@ do
             TriggerClientEvent('chat:addMessage', src, {
                 args = { '^2[ALPR]', ('Plate %s removed from the hotlist.'):format(cleanPlate) }
             })
-        else
+        else -- list
             local n = 0
             for p, e in pairs(hotlist) do
                 n = n + 1
@@ -625,10 +600,7 @@ do
         BroadcastCameras(source)
         BroadcastMeta(source)
     end)
-
-
-    local callCooldown = {}
-
+    local callCooldown = {} 
     RegisterNetEvent('cdecad-alpr:plateSeen')
     AddEventHandler('cdecad-alpr:plateSeen', function(camId, plate, speedMph)
         local src = source
@@ -636,9 +608,18 @@ do
         local cleanPlate = NormalizePlate(plate)
         if cleanPlate == '' or not camId then return end
 
+        -- Server-authoritative camera lookup (coords, enabled, speed limit).
         local cam = FindCamera(camId)
         if not cam or cam.enabled == false then return end
 
+        -- Anti-forgery proximity gate. The legit client only reports plates it
+        -- physically scanned, which requires the reporting player to be within
+        -- ClientActiveRange of the (fixed) camera. Without this check, any
+        -- modded client could TriggerServerEvent('cdecad-alpr:plateSeen', id,
+        -- 'ANYPLATE', 9999) from anywhere on the map to fabricate a flagged /
+        -- speeding hit + auto-911 for a plate of their choosing. Verify the
+        -- caller's server-side ped position against the camera before trusting
+        -- the read. Generous margin (2x range) absorbs latency / desync.
         local ped = GetPlayerPed(src)
         if not ped or ped == 0 then return end
         local pc = GetEntityCoords(ped)
@@ -652,10 +633,29 @@ do
 
         speedMph = tonumber(speedMph)
 
+        -- Classify the read. Hotlist beats CAD flags beats speed - a plate can
+        -- be several at once and we escalate the most specific.
         local kind, flags, alertLevel
         local hot = hotlist[cleanPlate]
         local hit = flaggedCache[cleanPlate]
         local speeding = cam.speedLimit and speedMph and speedMph > cam.speedLimit
+
+        -- Geofenced hot plate: the watch names specific cameras, and this
+        -- isn't one of them. Drop only the HOT flags - anything else on the
+        -- record (STOLEN, BOLO, warrants) still alerts everywhere, since a
+        -- camera scope on a watchlist entry shouldn't mask a real flag. If
+        -- nothing survives, treat the plate as unflagged at this camera.
+        if hit and hit.hotCamScope and not hit.hotCamScope[camId] then
+            local kept = {}
+            for _, f in ipairs(hit.flags or {}) do
+                if not tostring(f):match('^HOT') then kept[#kept + 1] = f end
+            end
+            if #kept == 0 then
+                hit = nil
+            else
+                hit = { flags = kept, alertLevel = hit.alertLevel }
+            end
+        end
 
         if hot then
             kind = 'hotlist'
@@ -695,17 +695,14 @@ do
         print(('[cad-alpr] %s hit: plate %s at camera #%d (%s) - %s'):format(
             kind:upper(), cleanPlate, camId, camName, flagStr
         ))
-
         cam.hits = (cam.hits or 0) + 1
         SaveCameras()
         BroadcastCameras()
-
         AlertOfficers({
             camId = cam.id, cameraName = camName, plate = cleanPlate,
             kind = kind, flags = flags,
             x = cam.x, y = cam.y, z = cam.z,
         })
-
         local callType, priority, description
         if kind == 'speed' then
             callType    = ALPR.SpeedCallType or 'ALPR Speed'
@@ -739,11 +736,9 @@ do
             RecordHit(cam, hitData, incidentNumber, src)
         end)
     end)
-
-
     CreateThread(function()
         while true do
-            Wait(300000)
+            Wait(300000)  -- 5 min
             local now = os.time()
             for k, t in pairs(callCooldown) do
                 if (now - t) > ALPR.CallCooldownSeconds * 2 then
@@ -752,8 +747,6 @@ do
             end
         end
     end)
-
-
     RegisterCommand('alprstatus', function(source)
         local msg = ('%d cameras placed | flagged-plate cache: %d plates (generated %s)'):format(
             #cameras, flaggedCacheCount, tostring(flaggedCacheGeneratedAt or 'never')
@@ -770,8 +763,6 @@ do
         print('[cad-alpr] Manual flagged-plate cache refresh requested')
         RebuildFlaggedCache()
     end, true)
-
-
     AddEventHandler('onResourceStart', function(resource)
         if resource ~= GetCurrentResourceName() then return end
         LoadCameras()
@@ -795,7 +786,6 @@ do
             RebuildFlaggedCache()
         end
     end)
-
     CreateThread(function()
         while true do
             Wait(30000)
